@@ -16,6 +16,9 @@ export const useRoomList = ({
   const [refreshing, setRefreshing] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [joiningRoom, setJoiningRoom] = useState(false);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const isLoadingRef = useRef(false);
 
@@ -59,13 +62,15 @@ export const useRoomList = ({
   const loadRooms = useCallback(async () => {
     await attemptConnection();
 
-    const response = await axiosInstance.get('/api/rooms');
+    const response = await axiosInstance.get('/api/rooms', { params: { limit: 20 } });
 
     if (!response?.data?.data) {
       throw new Error('INVALID_RESPONSE');
     }
 
     setRooms(response.data.data);
+    setNextCursor(response.data.metadata?.nextCursor || null);
+    setHasMore(Boolean(response.data.metadata?.hasMore));
   }, [attemptConnection]);
 
   const fetchRooms = useCallback(async () => {
@@ -126,6 +131,29 @@ export const useRoomList = ({
     }
   }, [currentUser, loadRooms]);
 
+  const loadMoreRooms = useCallback(async () => {
+    if (!currentUser?.token || !hasMore || !nextCursor || isLoadingRef.current) return false;
+    try {
+      isLoadingRef.current = true;
+      setIsLoadingMore(true);
+      const response = await axiosInstance.get('/api/rooms', { params: { limit: 20, cursor: nextCursor } });
+      if (!response?.data?.data) throw new Error('INVALID_RESPONSE');
+      setRooms((previous) => {
+        const ids = new Set(previous.map((room) => room._id));
+        return [...previous, ...response.data.data.filter((room) => !ids.has(room._id))];
+      });
+      setNextCursor(response.data.metadata?.nextCursor || null);
+      setHasMore(Boolean(response.data.metadata?.hasMore));
+      return true;
+    } catch (error) {
+      handleFetchError(error);
+      return false;
+    } finally {
+      setIsLoadingMore(false);
+      isLoadingRef.current = false;
+    }
+  }, [currentUser, hasMore, nextCursor, handleFetchError]);
+
   const handleJoinRoom = useCallback(async (roomId) => {
     if (connectionStatus !== CONNECTION_STATUS.CONNECTED) {
       setError({
@@ -169,9 +197,12 @@ export const useRoomList = ({
     setError,
     loading,
     refreshing,
+    hasMore,
+    isLoadingMore,
     joiningRoom,
     fetchRooms,
     refreshRooms,
+    loadMoreRooms,
     handleJoinRoom,
   };
 };

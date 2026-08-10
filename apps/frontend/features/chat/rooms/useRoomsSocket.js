@@ -48,7 +48,7 @@ export const useRoomsSocket = ({
             setConnectionStatus(CONNECTION_STATUS.ERROR);
           },
           roomCreated: (newRoom) => {
-            setRooms((prev) => [newRoom, ...prev]);
+            setRooms((prev) => [newRoom, ...prev.filter((room) => room._id !== newRoom._id)]);
           },
           roomUpdated: (updatedRoom) => {
             setRooms((prev) =>

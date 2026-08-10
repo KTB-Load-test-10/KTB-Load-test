@@ -14,7 +14,7 @@ import java.util.List;
 
 @Schema(description = "채팅방 응답 정보")
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class RoomResponse {
@@ -39,6 +39,9 @@ public class RoomResponse {
 
     @Schema(description = "현재 사용자가 생성자인지 여부", example = "true")
     private boolean isCreator;
+
+    @Schema(description = "생성 직후 현재 사용자가 이미 입장된 상태인지 여부", example = "true")
+    private boolean joined;
 
     @Schema(description = "최근 30분간 메시지 수", example = "23")
     private Integer recentMessageCount;
