@@ -96,10 +96,14 @@ public class RoomController {
     })
     @GetMapping
     @RateLimit
-    public ResponseEntity<?> getAllRooms(Principal principal) {
+    public ResponseEntity<?> getAllRooms(
+            Principal principal,
+            @RequestParam(required = false) String limit,
+            @RequestParam(required = false) String cursor) {
 
         try {
-            RoomsResponse response = roomService.getAllRooms(principal.getName());
+            int parsedLimit = parseLimit(limit);
+            RoomsResponse response = roomService.getAllRooms(principal.getName(), parsedLimit, cursor);
 
             // 캐시 설정
             return ResponseEntity.ok()
@@ -107,6 +111,9 @@ public class RoomController {
                 .header("Last-Modified", java.time.Instant.now().toString())
                 .body(response);
 
+        } catch (IllegalArgumentException e) {
+            // cursor는 불투명 문자열이지만 해석 불가 값은 요청 오류로 처리한다.
+            return ResponseEntity.badRequest().body(StandardResponse.error(e.getMessage()));
         } catch (Exception e) {
             log.error("방 목록 조회 에러", e);
 
@@ -150,13 +157,12 @@ public class RoomController {
                 );
             }
 
-            Room savedRoom = roomService.createRoom(createRoomRequest, principal.getName());
-            RoomResponse roomResponse = mapToRoomResponse(savedRoom, principal.getName());
+            RoomCreationResult result = roomService.createRoom(createRoomRequest, principal.getName());
 
             return ResponseEntity.status(201).body(
                 Map.of(
                     "success", true,
-                    "data", roomResponse
+                    "data", result.response()
                 )
             );
 
@@ -298,5 +304,18 @@ public class RoomController {
                 .isCreator(isCreator)
                 .recentMessageCount((int) recentMessageCount)
                 .build();
+    }
+
+    private int parseLimit(String limit) {
+        if (limit == null || limit.isBlank()) {
+            return RoomService.DEFAULT_PAGE_SIZE;
+        }
+        try {
+            int parsed = Integer.parseInt(limit);
+            if (parsed <= 0) return RoomService.DEFAULT_PAGE_SIZE;
+            return Math.min(parsed, RoomService.MAX_PAGE_SIZE);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("limit은 숫자여야 합니다.");
+        }
     }
 }

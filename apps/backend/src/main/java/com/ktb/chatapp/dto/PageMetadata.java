@@ -15,6 +15,7 @@ public class PageMetadata {
     private int pageSize;
     private long totalPages;
     private boolean hasMore;
+    private String nextCursor;
     private int currentCount;
     private SortInfo sort;
 
