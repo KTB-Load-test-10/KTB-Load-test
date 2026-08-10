@@ -1,0 +1,403 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  FRONT_IMAGE: ghcr.io/ktb-load-test-10/ktb-load-test-frontend
+  BACK_IMAGE: ghcr.io/ktb-load-test-10/ktb-load-test-backend
+
+jobs:
+  # ============================================================
+  # CI - 프론트엔드 이미지
+  # 빌드는 t3.small 서비스 EC2가 아닌
+  # GitHub 호스팅 인프라에서 수행합니다.
+  # ============================================================
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.1.0
+
+      - name: Validate deployment variables
+        env:
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$PUBLIC_BASE_URL"
+
+      - name: Create frontend production environment
+        env:
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+
+          cat > apps/frontend/.env.production <<EOF
+          NEXT_PUBLIC_API_URL=${PUBLIC_BASE_URL}
+          NEXT_PUBLIC_SOCKET_URL=${PUBLIC_BASE_URL}
+          EOF
+
+      - name: Login to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" \
+            | docker login ghcr.io \
+                -u "$GITHUB_ACTOR" \
+                --password-stdin
+
+      - name: Build frontend image
+        run: |
+          set -Eeuo pipefail
+
+          docker build \
+            -f apps/frontend/Dockerfile \
+            -t "${FRONT_IMAGE}:${GITHUB_SHA}" \
+            .
+
+      - name: Push frontend image
+        run: |
+          set -Eeuo pipefail
+          docker push "${FRONT_IMAGE}:${GITHUB_SHA}"
+
+
+  # ============================================================
+  # CI - 백엔드 이미지
+  #
+  # 백엔드 Dockerfile은 apps/backend 안에 있으며 pom.xml과 src를
+  # 해당 디렉터리 기준으로 참조합니다. 따라서 빌드 컨텍스트는
+  # 저장소 루트가 아닌 apps/backend입니다.
+  # ============================================================
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.1.0
+
+      - name: Login to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" \
+            | docker login ghcr.io \
+                -u "$GITHUB_ACTOR" \
+                --password-stdin
+
+      - name: Build backend image
+        run: |
+          set -Eeuo pipefail
+
+          docker build \
+            -f apps/backend/Dockerfile \
+            -t "${BACK_IMAGE}:${GITHUB_SHA}" \
+            apps/backend
+
+      - name: Push backend image
+        run: |
+          set -Eeuo pipefail
+          docker push "${BACK_IMAGE}:${GITHUB_SHA}"
+
+
+  # ============================================================
+  # CD - 백엔드
+  #
+  # 운영 환경에 접근하기 전에 두 이미지가 모두 성공적으로 빌드되어야 합니다.
+  # 이를 통해 프론트엔드 또는 백엔드 빌드 실패로 인한
+  # 불완전한 릴리스를 방지합니다.
+  # ============================================================
+  deploy-backend:
+    name: Deploy Backend
+    needs:
+      - build-frontend
+      - build-backend
+
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+
+    timeout-minutes: 10
+    environment: production
+
+    permissions:
+      packages: read
+
+    env:
+      BACKEND_HOSTS: ${{ vars.BACKEND_HOSTS }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Preflight
+        run: |
+          set -Eeuo pipefail
+
+          test -n "$BACKEND_HOSTS"
+          test -r "$HOME/.ssh/deploy_key"
+
+          for host in $BACKEND_HOSTS; do
+            ssh \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -i "$HOME/.ssh/deploy_key" \
+              "ubuntu@$host" \
+              "docker --version && test -r /opt/ktb/backend.env"
+          done
+
+      - name: Login backend hosts to GHCR
+        run: |
+          set -Eeuo pipefail
+
+          for host in $BACKEND_HOSTS; do
+            printf '%s' "$GHCR_TOKEN" |
+              ssh \
+                -o BatchMode=yes \
+                -o StrictHostKeyChecking=yes \
+                -i "$HOME/.ssh/deploy_key" \
+                "ubuntu@$host" \
+                "docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin"
+          done
+
+      - name: Deploy backend hosts
+        run: |
+          set -Eeuo pipefail
+
+          for host in $BACKEND_HOSTS; do
+            echo "Deploying backend to $host"
+
+            ssh \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -i "$HOME/.ssh/deploy_key" \
+              "ubuntu@$host" \
+              "IMAGE='$BACK_IMAGE' TAG='$GITHUB_SHA' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+
+          NAME="loadtest-back"
+          ENV_FILE="/opt/ktb/backend.env"
+          NEW_IMAGE="${IMAGE}:${TAG}"
+
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
+          test -r "$ENV_FILE"
+
+          echo "Pulling $NEW_IMAGE"
+          docker pull "$NEW_IMAGE"
+
+          PREV_IMAGE="$(
+            docker inspect \
+              --format '{{.Config.Image}}' \
+              "$NAME" 2>/dev/null || true
+          )"
+
+          echo "Previous image: ${PREV_IMAGE:-none}"
+
+          docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+          docker run -d \
+            --name "$NAME" \
+            --restart unless-stopped \
+            --env-file "$ENV_FILE" \
+            --log-opt max-size=100m \
+            --log-opt max-file=3 \
+            -p 5001:5001 \
+            -p 5002:5002 \
+            "$NEW_IMAGE"
+
+          HEALTHY=0
+
+          for attempt in $(seq 1 45); do
+            if curl \
+              -fsS \
+              --max-time 2 \
+              http://127.0.0.1:5001/api/health \
+              >/dev/null; then
+
+              HEALTHY=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$HEALTHY" -ne 1 ]; then
+            echo "Backend health check failed."
+            docker logs --tail 200 "$NAME" || true
+            docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+            if [ -n "$PREV_IMAGE" ]; then
+              echo "Rolling back to $PREV_IMAGE"
+
+              docker run -d \
+                --name "$NAME" \
+                --restart unless-stopped \
+                --env-file "$ENV_FILE" \
+                --log-opt max-size=100m \
+                --log-opt max-file=3 \
+                -p 5001:5001 \
+                -p 5002:5002 \
+                "$PREV_IMAGE"
+            fi
+
+            exit 1
+          fi
+
+          echo "Backend healthy: $NEW_IMAGE"
+          docker image prune -f
+          REMOTE
+
+          done
+
+
+  # ============================================================
+  # CD - 프론트엔드
+  #
+  # 백엔드를 먼저 배포합니다. 백엔드 헬스 체크가 성공한 후에만
+  # 프론트엔드를 업데이트합니다.
+  # ============================================================
+  deploy-frontend:
+    name: Deploy Frontend
+    needs:
+      - deploy-backend
+
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+
+    timeout-minutes: 10
+    environment: production
+
+    permissions:
+      packages: read
+
+    env:
+      FRONT_HOST: ${{ vars.FRONT_HOST }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Preflight
+        run: |
+          set -Eeuo pipefail
+
+          test -n "$FRONT_HOST"
+          test -r "$HOME/.ssh/deploy_key"
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -i "$HOME/.ssh/deploy_key" \
+            "ubuntu@$FRONT_HOST" \
+            "docker --version"
+
+      - name: Login frontend host to GHCR
+        run: |
+          set -Eeuo pipefail
+
+          printf '%s' "$GHCR_TOKEN" |
+            ssh \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -i "$HOME/.ssh/deploy_key" \
+              "ubuntu@$FRONT_HOST" \
+              "docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin"
+
+      - name: Deploy frontend
+        run: |
+          set -Eeuo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -i "$HOME/.ssh/deploy_key" \
+            "ubuntu@$FRONT_HOST" \
+            "IMAGE='$FRONT_IMAGE' TAG='$GITHUB_SHA' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+
+          NAME="loadtest-front"
+          NEW_IMAGE="${IMAGE}:${TAG}"
+
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+
+          echo "Pulling $NEW_IMAGE"
+          docker pull "$NEW_IMAGE"
+
+          PREV_IMAGE="$(
+            docker inspect \
+              --format '{{.Config.Image}}' \
+              "$NAME" 2>/dev/null || true
+          )"
+
+          echo "Previous image: ${PREV_IMAGE:-none}"
+
+          docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+          docker run -d \
+            --name "$NAME" \
+            --restart unless-stopped \
+            --log-opt max-size=100m \
+            --log-opt max-file=3 \
+            -p 3000:3000 \
+            "$NEW_IMAGE"
+
+          HEALTHY=0
+
+          for attempt in $(seq 1 30); do
+            if curl \
+              -fsS \
+              --max-time 2 \
+              http://127.0.0.1:3000/ \
+              >/dev/null; then
+
+              HEALTHY=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$HEALTHY" -ne 1 ]; then
+            echo "Frontend health check failed."
+            docker logs --tail 200 "$NAME" || true
+            docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+            if [ -n "$PREV_IMAGE" ]; then
+              echo "Rolling back to $PREV_IMAGE"
+
+              docker run -d \
+                --name "$NAME" \
+                --restart unless-stopped \
+                --log-opt max-size=100m \
+                --log-opt max-file=3 \
+                -p 3000:3000 \
+                "$PREV_IMAGE"
+            fi
+
+            exit 1
+          fi
+
+          echo "Frontend healthy: $NEW_IMAGE"
+          docker image prune -f
+          REMOTE
