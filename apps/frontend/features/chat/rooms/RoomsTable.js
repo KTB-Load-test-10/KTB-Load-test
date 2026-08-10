@@ -1,15 +1,20 @@
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 import { LockIcon, GroupIcon } from '@vapor-ui/icons';
 import { Button, Text, VStack, HStack } from '@vapor-ui/core';
 import * as Table from '@/components/Table';
 import { CONNECTION_STATUS } from './useServerConnection';
+import useInfiniteScroll from '@/hooks/useInfiniteScroll';
 
-const RoomsTable = ({ rooms, connectionStatus, onJoinRoom }) => {
+const RoomsTable = ({ rooms, connectionStatus, onJoinRoom, hasMore, isLoadingMore, onLoadMore }) => {
+  const scrollRootRef = useRef(null);
+  const observerOptions = useMemo(() => ({ root: scrollRootRef.current, rootMargin: '120px', threshold: 0.1 }), [rooms.length]);
+  const { sentinelRef } = useInfiniteScroll(onLoadMore, hasMore, isLoadingMore, observerOptions);
   if (!rooms || rooms.length === 0) return null;
 
   return (
     <div
       className="chat-rooms-table"
+      ref={scrollRootRef}
       style={{
         height: '430px',
         overflowY: 'auto',
@@ -89,6 +94,15 @@ const RoomsTable = ({ rooms, connectionStatus, onJoinRoom }) => {
               </Table.Cell>
             </Table.Row>
           ))}
+          {hasMore && (
+            <Table.Row>
+              <Table.Cell colSpan={5}>
+                <div ref={sentinelRef} style={{ height: '1px', textAlign: 'center' }}>
+                  {isLoadingMore ? '채팅방을 불러오는 중…' : ''}
+                </div>
+              </Table.Cell>
+            </Table.Row>
+          )}
         </Table.Body>
       </Table.Root>
     </div>

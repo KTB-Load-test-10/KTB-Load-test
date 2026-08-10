@@ -66,7 +66,12 @@ function NewChatRoom() {
       });
 
       const { data } = response.data;
-      await joinRoom(data._id, formData.hasPassword ? formData.password : undefined);
+      // 생성 API는 생성자를 이미 participant로 저장한다. 구버전 응답에는 join으로 호환한다.
+      if (data.joined) {
+        router.push(`/chat/${data._id}`);
+      } else {
+        await joinRoom(data._id, formData.hasPassword ? formData.password : undefined);
+      }
 
     } catch (error) {
       console.error('Room creation/join error:', error);
