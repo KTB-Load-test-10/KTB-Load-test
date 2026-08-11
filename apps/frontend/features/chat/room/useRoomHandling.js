@@ -45,8 +45,10 @@ export const useRoomHandling = ({
   const roomEventsUnsubscribeRef = useRef(null);
   const MAX_SOCKET_RECONNECT_ATTEMPTS = 3;
   const MAX_MESSAGE_RETRY_ATTEMPTS = 3;
+  const MAX_JOIN_ROOM_RETRY_ATTEMPTS = 2;
   const MESSAGE_TIMEOUT = 5000;
   const MESSAGE_RETRY_DELAY = 2000;
+  const JOIN_ROOM_RETRY_DELAY = 500;
 
   const processMessages = useCallback(
     (loadedMessages, hasMore, isInitialLoad = false) => {
@@ -250,6 +252,26 @@ export const useRoomHandling = ({
     [socketRef, mountedRef, userRooms]
   );
 
+  const joinRoomWithRetry = useCallback(async (roomId, retryCount = 0) => {
+    try {
+      return await joinRoom(roomId);
+    } catch (error) {
+      // 중요: REST 참가가 완료된 직후 Socket join 응답만 늦는 경우에만 재시도한다.
+      const isJoinTimeout = error?.message?.includes('입장 시간이 초과');
+      const canRetry = isJoinTimeout
+        && retryCount < MAX_JOIN_ROOM_RETRY_ATTEMPTS
+        && mountedRef.current
+        && socketRef.current?.connected;
+
+      if (!canRetry) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, JOIN_ROOM_RETRY_DELAY));
+      return joinRoomWithRetry(roomId, retryCount + 1);
+    }
+  }, [joinRoom, mountedRef, socketRef]);
+
   // 재연결 뒤 필요한 것은 방 참가 상태 복구뿐이다. socket.io 가 같은 소켓을
   // 되살렸으므로 방 이벤트 구독도 그대로 살아 있다 — 여기서 소켓을 새로 만들면
   // 살아 있는 연결을 버리는 셈이 된다.
@@ -366,7 +388,7 @@ export const useRoomHandling = ({
 
         // 4. Join Room and Load Messages
         if (mountedRef.current && socketRef.current?.connected) {
-          const joinResult = await joinRoom(roomId);
+          const joinResult = await joinRoomWithRetry(roomId);
 
           if (Array.isArray(joinResult?.messages)) {
             processMessages(joinResult.messages, joinResult.hasMore, true);
@@ -413,6 +435,7 @@ export const useRoomHandling = ({
     setupSocket,
     fetchRoomData,
     joinRoom,
+    joinRoomWithRetry,
     loadInitialMessages,
     processMessages,
     cleanup,

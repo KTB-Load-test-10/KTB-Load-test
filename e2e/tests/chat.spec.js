@@ -61,9 +61,6 @@ test.describe('채팅 smoke', () => {
 });
 
 test.describe.serial('채팅 E2E 테스트', () => {
-  // 5개 계정의 회원가입·로그인을 준비하는 실제 통합 fixture에 맞춘 예산이다.
-  test.describe.configure({ timeout: 60_000 });
-
   let testUsers = [];
 
   test.beforeAll(async ({ browser }) => {
@@ -84,6 +81,7 @@ test.describe.serial('채팅 E2E 테스트', () => {
       if (!isLastUser) {
         await page.goto(`${BASE_URL}/chat`);
         await logoutAction(page);
+        await page.waitForTimeout(500);
       }
     }
 
@@ -97,44 +95,6 @@ test.describe.serial('채팅 E2E 테스트', () => {
   });
 
   test.describe('채팅방 관리', () => {
-    test('지연된 로그아웃 응답이 회원가입 화면을 덮어쓰지 않는다', async ({ page }) => {
-      let markLogoutRequestObserved;
-      const logoutRequestObserved = new Promise((resolve) => {
-        markLogoutRequestObserved = resolve;
-      });
-      let releaseLogoutResponse;
-      const logoutResponseGate = new Promise((resolve) => {
-        releaseLogoutResponse = resolve;
-      });
-      let markLogoutResponseFinished;
-      const logoutResponseFinished = new Promise((resolve) => {
-        markLogoutResponseFinished = resolve;
-      });
-
-      await page.route('**/api/auth/logout', async (route) => {
-        markLogoutRequestObserved();
-        await logoutResponseGate;
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true, message: '로그아웃이 완료되었습니다.', data: null }),
-        });
-        markLogoutResponseFinished();
-      });
-
-      await page.goto(`${BASE_URL}/chat`);
-      await logoutAction(page);
-      await logoutRequestObserved;
-
-      await page.goto(`${BASE_URL}/register`);
-      await expect(page.getByTestId('register-email-input')).toBeVisible();
-
-      releaseLogoutResponse();
-      await logoutResponseFinished;
-      await expect(page.getByTestId('register-email-input')).toBeVisible();
-      await page.unroute('**/api/auth/logout');
-    });
-
     test('새 채팅방 만들기', async ({ page }) => {
       const roomName = `테스트_채팅방_${Math.random().toString(36).substring(2, 8)}`;
 

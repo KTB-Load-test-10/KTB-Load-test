@@ -23,7 +23,7 @@ function MyApp({ Component, pageProps }) {
   }
 
   // 로그인/회원가입 페이지에서는 헤더 숨김
-  const showHeader = !['/', '/register'].includes(router.pathname);
+  const showHeader = !['/', '/login', '/register'].includes(router.pathname);
 
   return (
     <ThemeProvider defaultTheme="dark">

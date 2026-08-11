@@ -2,6 +2,8 @@ package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.config.MongoTestContainer;
 import com.ktb.chatapp.config.RedisTestContainer;
+import com.ktb.chatapp.repository.RateLimitRepository;
+import com.ktb.chatapp.service.ratelimit.RateLimitStore;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,13 +26,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RateLimitServiceTest {
 
     @Autowired
+    private RateLimitRepository rateLimitRepository;
+
+    @Autowired
     private RateLimitService rateLimitService;
 
-    private static int clientSequence;
+    @Autowired
+    private RateLimitStore rateLimitStore;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     @BeforeEach
     void setUp() {
-        clientSequence++;
+        rateLimitRepository.deleteAll();
+        redisTemplate.keys("chat:rate-limit:*").forEach(redisTemplate::delete);
     }
 
     @Test
@@ -37,7 +48,7 @@ class RateLimitServiceTest {
     void checkRateLimit_AllowsFirstRequest() {
         int maxRequests = 5;
         Duration window = Duration.ofSeconds(60);
-        String clientId = clientId("ip:127.0.0.1");
+        String clientId = "ip:127.0.0.1";
 
         long beforeCall = Instant.now().getEpochSecond();
         RateLimitCheckResult result =
@@ -58,7 +69,7 @@ class RateLimitServiceTest {
     void checkRateLimit_DeniesWhenLimitExceeded() {
         int maxRequests = 5;
         Duration window = Duration.ofSeconds(60);
-        String clientId = clientId("ip:127.0.0.1");
+        String clientId = "ip:127.0.0.1";
 
         // 한도까지 요청을 수행
         for (int i = 0; i < maxRequests; i++) {
@@ -86,7 +97,7 @@ class RateLimitServiceTest {
     void checkRateLimit_DecreasesRemainingOnConsecutiveRequests() {
         int maxRequests = 3;
         Duration window = Duration.ofSeconds(60);
-        String clientId = clientId("ip:192.168.1.1");
+        String clientId = "ip:192.168.1.1";
 
         RateLimitCheckResult result1 =
                 rateLimitService.checkRateLimit(clientId, maxRequests, window);
@@ -109,8 +120,8 @@ class RateLimitServiceTest {
     void checkRateLimit_IndependentLimitsPerClient() {
         int maxRequests = 2;
         Duration window = Duration.ofSeconds(60);
-        String clientId1 = clientId("ip:10.0.0.1");
-        String clientId2 = clientId("ip:10.0.0.2");
+        String clientId1 = "ip:10.0.0.1";
+        String clientId2 = "ip:10.0.0.2";
 
         // 첫 번째 클라이언트가 한도까지 요청
         for (int i = 0; i < maxRequests; i++) {
@@ -131,7 +142,14 @@ class RateLimitServiceTest {
         assertThat(result2.remaining()).isEqualTo(1);
     }
 
-    private String clientId(String value) {
-        return value + ":" + clientSequence;
+    @Test
+    @DisplayName("서로 다른 서비스 인스턴스도 같은 Redis 카운터를 공유한다")
+    void checkRateLimit_SharesCounterAcrossServiceInstances() {
+        RateLimitService secondInstance = new RateLimitService(rateLimitStore);
+        Duration window = Duration.ofSeconds(60);
+
+        assertThat(rateLimitService.checkRateLimit("shared-client", 2, window).allowed()).isTrue();
+        assertThat(secondInstance.checkRateLimit("shared-client", 2, window).allowed()).isTrue();
+        assertThat(rateLimitService.checkRateLimit("shared-client", 2, window).allowed()).isFalse();
     }
 }

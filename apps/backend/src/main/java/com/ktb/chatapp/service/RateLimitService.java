@@ -14,14 +14,14 @@ import org.springframework.stereotype.Service;
 public class RateLimitService {
 
     private final RateLimitStore rateLimitStore;
-
     public RateLimitCheckResult checkRateLimit(String clientId, int maxRequests, Duration window) {
+        String actualClientId = String.valueOf(clientId);
         Duration effectiveWindow = window != null ? window : Duration.ofSeconds(1);
         long windowSeconds = Math.max(1L, effectiveWindow.getSeconds());
         long nowEpochSeconds = Instant.now().getEpochSecond();
 
         try {
-            RateLimitStoreResult state = rateLimitStore.increment(String.valueOf(clientId), windowSeconds);
+            RateLimitStoreResult state = rateLimitStore.increment(actualClientId, windowSeconds);
             long ttlSeconds = state.ttlSeconds();
             long resetEpochSeconds = nowEpochSeconds + ttlSeconds;
             if (state.count() > maxRequests) {
@@ -36,7 +36,7 @@ public class RateLimitService {
                     resetEpochSeconds,
                     ttlSeconds);
         } catch (Exception e) {
-            log.error("Rate limit check failed for client: {}", clientId, e);
+            log.error("Rate limit check failed for client: {}", actualClientId, e);
             long resetEpochSeconds = nowEpochSeconds + windowSeconds;
             return RateLimitCheckResult.allowed(
                     maxRequests, maxRequests, windowSeconds, resetEpochSeconds, windowSeconds);
