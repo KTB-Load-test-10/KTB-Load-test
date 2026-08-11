@@ -2,6 +2,7 @@ package com.ktb.chatapp.service.session;
 
 import com.ktb.chatapp.model.Session;
 import java.util.Optional;
+import java.time.Instant;
 
 /**
  * Data store interface for session storage.
@@ -24,6 +25,10 @@ public interface SessionStore {
      * @return the saved session
      */
     Session save(Session session);
+
+    /** 세션 일치·만료 검증과 활동 시각 갱신을 한 저장소 왕복으로 수행한다. */
+    Optional<Session> validateAndTouch(
+            String userId, String sessionId, long activeAfter, long now, Instant expiresAt);
     
     /**
      * Delete all sessions for a user

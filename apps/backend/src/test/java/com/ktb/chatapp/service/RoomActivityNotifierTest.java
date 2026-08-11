@@ -30,13 +30,16 @@ class RoomActivityNotifierTest {
     void notifyMessageStored_firstMessageOfRoom_publishesRecentMessageCount() {
         when(recentMessageCounter.countRecentMessages("room-1")).thenReturn(7);
 
-        notifier().notifyMessageStored("room-1");
+        RoomActivityNotifier notifier = notifier();
+        notifier.notifyMessageStored("room-1");
+        notifier.publishLatestActivity("room-1");
 
         ArgumentCaptor<RoomActivityEvent> eventCaptor =
                 ArgumentCaptor.forClass(RoomActivityEvent.class);
         verify(eventPublisher).publishEvent(eventCaptor.capture());
         assertEquals("room-1", eventCaptor.getValue().getRoomId());
         assertEquals(7, eventCaptor.getValue().getRecentMessageCount());
+        notifier.shutdown();
     }
 
     @Test
@@ -47,17 +50,21 @@ class RoomActivityNotifierTest {
         notifier.notifyMessageStored("room-1");
         notifier.notifyMessageStored("room-1");
         notifier.notifyMessageStored("room-1");
+        notifier.publishLatestActivity("room-1");
 
-        verify(eventPublisher, times(3)).publishEvent(any(RoomActivityEvent.class));
-        verify(recentMessageCounter, times(3)).countRecentMessages("room-1");
+        verify(eventPublisher, times(1)).publishEvent(any(RoomActivityEvent.class));
+        verify(recentMessageCounter, times(1)).countRecentMessages("room-1");
+        notifier.shutdown();
     }
 
     @Test
     void notifyMessageStored_nullRoomId_doesNothing() {
-        notifier().notifyMessageStored(null);
+        RoomActivityNotifier notifier = notifier();
+        notifier.notifyMessageStored(null);
 
         verifyNoInteractions(recentMessageCounter);
         verify(eventPublisher, never()).publishEvent(any(RoomActivityEvent.class));
+        notifier.shutdown();
     }
 
     @Test
@@ -65,8 +72,11 @@ class RoomActivityNotifierTest {
         when(recentMessageCounter.countRecentMessages("room-1"))
                 .thenThrow(new RuntimeException("mongo down"));
 
-        notifier().notifyMessageStored("room-1");
+        RoomActivityNotifier notifier = notifier();
+        notifier.notifyMessageStored("room-1");
+        notifier.publishLatestActivity("room-1");
 
         verify(eventPublisher, never()).publishEvent(any(RoomActivityEvent.class));
+        notifier.shutdown();
     }
 }

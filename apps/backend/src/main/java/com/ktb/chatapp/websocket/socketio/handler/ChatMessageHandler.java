@@ -11,7 +11,6 @@ import com.ktb.chatapp.dto.UserResponse;
 import com.ktb.chatapp.model.*;
 import com.ktb.chatapp.repository.FileRepository;
 import com.ktb.chatapp.repository.MessageRepository;
-import com.ktb.chatapp.repository.RoomRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.util.BannedWordChecker;
 import com.ktb.chatapp.websocket.socketio.ai.AiService;
@@ -21,12 +20,14 @@ import com.ktb.chatapp.service.SessionValidationResult;
 import com.ktb.chatapp.service.RateLimitService;
 import com.ktb.chatapp.service.RateLimitCheckResult;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
+import com.ktb.chatapp.websocket.socketio.UserRooms;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -41,7 +42,6 @@ import static com.ktb.chatapp.websocket.socketio.SocketIOEvents.*;
 public class ChatMessageHandler {
     private final SocketIOServer socketIOServer;
     private final MessageRepository messageRepository;
-    private final RoomRepository roomRepository;
     private final UserRepository userRepository;
     private final FileRepository fileRepository;
     private final AiService aiService;
@@ -50,6 +50,9 @@ public class ChatMessageHandler {
     private final BannedWordChecker bannedWordChecker;
     private final RateLimitService rateLimitService;
     private final MeterRegistry meterRegistry;
+    private final UserRooms userRooms;
+    private final Map<String, Timer> timers = new ConcurrentHashMap<>();
+    private final Map<String, Counter> counters = new ConcurrentHashMap<>();
     
     @OnEvent(CHAT_MESSAGE)
     public void handleChatMessage(SocketIOClient client, ChatMessageRequest data) {
@@ -110,7 +113,10 @@ public class ChatMessageHandler {
         }
         
         try {
-            User sender = userRepository.findById(socketUser.id()).orElse(null);
+            User sender = client.get("userDetails");
+            if (sender == null) {
+                sender = userRepository.findById(socketUser.id()).orElse(null);
+            }
             if (sender == null) {
                 recordError("user_not_found");
                 client.sendEvent(ERROR, Map.of(
@@ -122,8 +128,8 @@ public class ChatMessageHandler {
             }
 
             String roomId = data.getRoom();
-            Room room = roomRepository.findById(roomId).orElse(null);
-            if (room == null || !room.getParticipantIds().contains(socketUser.id())) {
+            // joinRoom에서 검증한 연결 수명 참가 상태를 재사용하고 leave/disconnect에서 즉시 제거한다.
+            if (!userRooms.isInRoom(socketUser.id(), roomId)) {
                 recordError("room_access_denied");
                 client.sendEvent(ERROR, Map.of(
                     "code", "MESSAGE_ERROR",
@@ -149,11 +155,16 @@ public class ChatMessageHandler {
             }
 
             String messageType = data.getMessageType();
-            Message message = switch (messageType) {
-                case "file" -> handleFileMessage(roomId, socketUser.id(), messageContent, data.getFileData());
-                case "text" -> handleTextMessage(roomId, socketUser.id(), messageContent);
-                default -> throw new IllegalArgumentException("Unsupported message type: " + messageType);
-            };
+            File attachedFile = null;
+            Message message;
+            if ("file".equals(messageType)) {
+                attachedFile = findValidatedFile(socketUser.id(), data.getFileData());
+                message = handleFileMessage(roomId, socketUser.id(), messageContent, attachedFile);
+            } else if ("text".equals(messageType)) {
+                message = handleTextMessage(roomId, socketUser.id(), messageContent);
+            } else {
+                throw new IllegalArgumentException("Unsupported message type: " + messageType);
+            }
 
             if (message == null) {
                 log.warn("Empty message - ignoring. room: {}, userId: {}, messageType: {}", roomId, socketUser.id(), messageType);
@@ -162,7 +173,7 @@ public class ChatMessageHandler {
             }
 
             Message savedMessage = messageRepository.save(message);
-            MessageResponse messageResponse = createMessageResponse(savedMessage, sender);
+            MessageResponse messageResponse = createMessageResponse(savedMessage, sender, attachedFile);
 
             socketIOServer.getRoomOperations(roomId)
                     .sendEvent(MESSAGE, messageResponse);
@@ -172,8 +183,6 @@ public class ChatMessageHandler {
 
             // AI 멘션 처리
             aiService.handleAIMentions(roomId, socketUser.id(), messageContent);
-
-            sessionService.updateLastActivity(socketUser.id());
 
             // Record success metrics
             recordMessageSuccess(messageType);
@@ -193,7 +202,7 @@ public class ChatMessageHandler {
         }
     }
 
-    private Message handleFileMessage(String roomId, String userId, MessageContent messageContent, Map<String, Object> fileData) {
+    private File findValidatedFile(String userId, Map<String, Object> fileData) {
         if (fileData == null || fileData.get("_id") == null) {
             throw new IllegalArgumentException("파일 데이터가 올바르지 않습니다.");
         }
@@ -204,12 +213,15 @@ public class ChatMessageHandler {
         if (file == null || !file.getUser().equals(userId)) {
             throw new IllegalStateException("파일을 찾을 수 없거나 접근 권한이 없습니다.");
         }
+        return file;
+    }
 
+    private Message handleFileMessage(String roomId, String userId, MessageContent messageContent, File file) {
         Message message = new Message();
         message.setRoomId(roomId);
         message.setSenderId(userId);
         message.setType(MessageType.file);
-        message.setFileId(fileId);
+        message.setFileId(file.getId());
         message.setContent(messageContent.getTrimmedContent());
         message.setTimestamp(LocalDateTime.now());
         message.setMentions(messageContent.aiMentions());
@@ -240,7 +252,7 @@ public class ChatMessageHandler {
         return message;
     }
 
-    private MessageResponse createMessageResponse(Message message, User sender) {
+    private MessageResponse createMessageResponse(Message message, User sender, File attachedFile) {
         var messageResponse = new MessageResponse();
         messageResponse.setId(message.getId());
         messageResponse.setRoomId(message.getRoomId());
@@ -251,9 +263,8 @@ public class ChatMessageHandler {
         messageResponse.setSender(UserResponse.from(sender));
         messageResponse.setMetadata(message.getMetadata());
 
-        if (message.getFileId() != null) {
-            fileRepository.findById(message.getFileId())
-                    .ifPresent(file -> messageResponse.setFile(FileResponse.from(file)));
+        if (attachedFile != null) {
+            messageResponse.setFile(FileResponse.from(attachedFile));
         }
 
         return messageResponse;
@@ -261,27 +272,26 @@ public class ChatMessageHandler {
 
     // Metrics helper methods
     private Timer createTimer(String status, String messageType) {
-        return Timer.builder("socketio.messages.processing.time")
+        String key = status + ':' + messageType;
+        return timers.computeIfAbsent(key, ignored -> Timer.builder("socketio.messages.processing.time")
                 .description("Socket.IO message processing time")
                 .tag("status", status)
                 .tag("message_type", messageType)
-                .register(meterRegistry);
+                .register(meterRegistry));
     }
 
     private void recordMessageSuccess(String messageType) {
-        Counter.builder("socketio.messages.total")
+        counters.computeIfAbsent("success:" + messageType, ignored -> Counter.builder("socketio.messages.total")
                 .description("Total Socket.IO messages processed")
                 .tag("status", "success")
                 .tag("message_type", messageType)
-                .register(meterRegistry)
-                .increment();
+                .register(meterRegistry)).increment();
     }
 
     private void recordError(String errorType) {
-        Counter.builder("socketio.messages.errors")
+        counters.computeIfAbsent("error:" + errorType, ignored -> Counter.builder("socketio.messages.errors")
                 .description("Socket.IO message processing errors")
                 .tag("error_type", errorType)
-                .register(meterRegistry)
-                .increment();
+                .register(meterRegistry)).increment();
     }
 }

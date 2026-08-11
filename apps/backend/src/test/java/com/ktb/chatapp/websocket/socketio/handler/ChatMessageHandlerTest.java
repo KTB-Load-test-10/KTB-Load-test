@@ -45,7 +45,6 @@ class ChatMessageHandlerTest {
 
     @Mock private SocketIOServer socketIOServer;
     @Mock private MessageRepository messageRepository;
-    @Mock private RoomRepository roomRepository;
     @Mock private UserRepository userRepository;
     @Mock private FileRepository fileRepository;
     @Mock private AiService aiService;
@@ -53,6 +52,7 @@ class ChatMessageHandlerTest {
     @Mock private RoomActivityNotifier roomActivityNotifier;
     @Mock private BannedWordChecker bannedWordChecker;
     @Mock private RateLimitService rateLimitService;
+    @Mock private com.ktb.chatapp.websocket.socketio.UserRooms userRooms;
     private MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private ChatMessageHandler handler;
@@ -63,7 +63,6 @@ class ChatMessageHandlerTest {
                 new ChatMessageHandler(
                         socketIOServer,
                         messageRepository,
-                        roomRepository,
                         userRepository,
                         fileRepository,
                         aiService,
@@ -71,7 +70,8 @@ class ChatMessageHandlerTest {
                         roomActivityNotifier,
                         bannedWordChecker,
                         rateLimitService,
-                        meterRegistry);
+                        meterRegistry,
+                        userRooms);
     }
 
     @Test
@@ -79,6 +79,7 @@ class ChatMessageHandlerTest {
         SocketIOClient client = mock(SocketIOClient.class);
         SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
         when(client.get("user")).thenReturn(socketUser);
+        when(userRooms.isInRoom("user-1", "room-1")).thenReturn(true);
 
         SessionValidationResult validResult = SessionValidationResult.valid(null);
         when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
@@ -91,11 +92,6 @@ class ChatMessageHandlerTest {
         User user = new User();
         user.setId("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
-
-        Room room = new Room();
-        room.setId("room-1");
-        room.setParticipantIds(new HashSet<>(java.util.List.of("user-1")));
-        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
 
         ChatMessageRequest request =
                 ChatMessageRequest.builder()
@@ -122,6 +118,7 @@ class ChatMessageHandlerTest {
         BroadcastOperations roomOperations = mock(BroadcastOperations.class);
         SocketUser socketUser = new SocketUser("user-1", "tester", "session-1", "socket-1");
         when(client.get("user")).thenReturn(socketUser);
+        when(userRooms.isInRoom("user-1", "room-1")).thenReturn(true);
 
         when(sessionService.validateSession(socketUser.id(), socketUser.authSessionId()))
                 .thenReturn(SessionValidationResult.valid(null));
@@ -133,10 +130,6 @@ class ChatMessageHandlerTest {
         user.setName("Tester");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
 
-        Room room = new Room();
-        room.setId("room-1");
-        room.setParticipantIds(new HashSet<>(java.util.List.of("user-1")));
-        when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
         when(bannedWordChecker.containsBannedWord("hello")).thenReturn(false);
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> {

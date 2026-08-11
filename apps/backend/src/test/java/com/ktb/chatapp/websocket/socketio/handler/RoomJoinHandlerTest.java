@@ -90,7 +90,7 @@ class RoomJoinHandlerTest {
                 .build();
 
         when(client.get("user")).thenReturn(socketUser);
-        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+        when(userRepository.findAllById(any())).thenReturn(List.of(user));
         when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
         when(userRooms.isInRoom("user-1", "room-1")).thenReturn(false);
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> {

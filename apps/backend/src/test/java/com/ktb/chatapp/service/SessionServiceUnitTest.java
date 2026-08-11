@@ -16,6 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -83,6 +85,8 @@ class SessionServiceUnitTest {
     @Test
     @DisplayName("세션 검증은 누락된 세션을 INVALID_SESSION으로 반환한다")
     void validateSession_MissingSession_ReturnsInvalidSession() {
+        when(sessionStore.validateAndTouch(eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenReturn(Optional.empty());
         when(sessionStore.findByUserId(USER_ID)).thenReturn(Optional.empty());
 
         SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
@@ -102,6 +106,8 @@ class SessionServiceUnitTest {
                 .lastActivity(Instant.now().minusSeconds(SessionService.SESSION_TTL_SEC + 10).toEpochMilli())
                 .expiresAt(Instant.now().minusSeconds(10))
                 .build();
+        when(sessionStore.validateAndTouch(eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenReturn(Optional.empty());
         when(sessionStore.findByUserId(USER_ID)).thenReturn(Optional.of(expiredSession));
 
         SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
@@ -115,7 +121,8 @@ class SessionServiceUnitTest {
     @Test
     @DisplayName("세션 검증 중 저장소 실패는 VALIDATION_ERROR로 반환한다")
     void validateSession_StoreFailure_ReturnsValidationError() {
-        when(sessionStore.findByUserId(USER_ID)).thenThrow(new IllegalStateException("store down"));
+        when(sessionStore.validateAndTouch(eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenThrow(new IllegalStateException("store down"));
 
         SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
 
