@@ -11,7 +11,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -60,8 +59,6 @@ public class ConnectionLoginHandler {
         String userId = user.id();
         
         try {
-            // 다른 노드에 접속된 사용자는 통보 불가
-            notifyDuplicateLogin(client, userId);
             client.set("user", user);
             
             userRooms.get(userId).forEach(roomId -> {
@@ -69,12 +66,16 @@ public class ConnectionLoginHandler {
                 roomJoinHandler.handleJoinRoom(client, roomId);
             });
             
+            client.joinRooms(Set.of(
+                    "user:" + userId,
+                    "socket:" + client.getSessionId(),
+                    "room-list"));
+
+            notifyDuplicateLogin(client, userId);
             connectedUsers.set(userId, user);
 
-            log.info("Socket.IO user connected: {} ({}) - Total concurrent users: {}",
+            log.info("Socket.IO user connected: {} ({}) - Global concurrent users: {}",
                     getUserName(client), userId, connectedUsers.size());
-
-            client.joinRooms(Set.of("user:" + userId, "room-list"));
             
         } catch (Exception e) {
             log.error("Error handling Socket.IO connection", e);
@@ -94,25 +95,28 @@ public class ConnectionLoginHandler {
                 return;
             }
             
-            userRooms.get(userId).forEach(roomId -> {
-                roomLeaveHandler.handleLeaveRoom(client, roomId);
-            });
             String socketId = client.getSessionId().toString();
-            
-            // 해당 사용자의 현재 활성 연결인 경우에만 정리
+
+            // Only the currently registered socket may mutate shared user/room state. An older
+            // duplicate connection can disconnect after a replacement connected on another node.
             var socketUser = connectedUsers.get(userId);
             if (socketUser != null && socketId.equals(socketUser.socketId())) {
+                userRooms.get(userId).forEach(roomId ->
+                        roomLeaveHandler.handleLeaveRoom(client, roomId));
                 connectedUsers.del(userId);
             } else {
                 log.warn("Socket.IO disconnect: User {} has a different active connection. Skipping cleanup.", userId);
             }
 
-            client.leaveRooms(Set.of("user:" + userId, "room-list"));
+            client.leaveRooms(Set.of(
+                    "user:" + userId,
+                    "socket:" + socketId,
+                    "room-list"));
             client.del("user");
             client.del("userDetails");
             client.disconnect();
 
-            log.info("Socket.IO user disconnected: {} ({}) - Total concurrent users: {}",
+            log.info("Socket.IO user disconnected: {} ({}) - Global concurrent users: {}",
                     userName, userId, connectedUsers.size());
         } catch (Exception e) {
             log.error("Error handling Socket.IO disconnection", e);
@@ -137,23 +141,17 @@ public class ConnectionLoginHandler {
         return user != null ? user.name() : null;
     }
     
-    /**
-     * TODO 멀티 클러스터에서 동작 안함
-     * socketIOServer.getRoomOperations("user:" + userId) 로 처리 변경.
-     */
     private void notifyDuplicateLogin(SocketIOClient client, String userId) {
         var socketUser = connectedUsers.get(userId);
         if (socketUser == null) {
             return;
         }
         String existingSocketId = socketUser.socketId();
-        SocketIOClient existingClient = socketIOServer.getClient(UUID.fromString(existingSocketId));
-        if (existingClient == null) {
-            return;
-        }
+        String existingSocketRoom = "socket:" + existingSocketId;
         
-        // Send duplicate login notification
-        existingClient.sendEvent(DUPLICATE_LOGIN, Map.of(
+        // A private room targets the existing socket without attempting to serialize or look up a
+        // SocketIOClient from another JVM.
+        socketIOServer.getRoomOperations(existingSocketRoom).sendEvent(DUPLICATE_LOGIN, Map.of(
                 "type", "new_login_attempt",
                 "deviceInfo", client.getHandshakeData().getHttpHeaders().get("User-Agent"),
                 "ipAddress", client.getRemoteAddress().toString(),
@@ -163,7 +161,7 @@ public class ConnectionLoginHandler {
         new Thread(() -> {
             try {
                 Thread.sleep(Duration.ofSeconds(10));
-                existingClient.sendEvent(SESSION_ENDED, Map.of(
+                socketIOServer.getRoomOperations(existingSocketRoom).sendEvent(SESSION_ENDED, Map.of(
                         "reason", "duplicate_login",
                         "message", "다른 기기에서 로그인하여 현재 세션이 종료되었습니다."
                 ));

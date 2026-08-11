@@ -15,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,9 +43,11 @@ class ConnectionLoginHandlerTest {
 
     @Test
     void onConnect_setsUserRejoinsRoomsStoresUserAndJoinsUserRooms() {
-        SocketUser user = new SocketUser("user-1", "tester", "session-1", "socket-1");
+        UUID socketId = UUID.randomUUID();
+        SocketUser user = new SocketUser("user-1", "tester", "session-1", socketId.toString());
         when(connectedUsers.get(user.id())).thenReturn(null);
         when(client.get("user")).thenReturn(user);
+        when(client.getSessionId()).thenReturn(socketId);
         when(userRooms.get(user.id())).thenReturn(Set.of("room-1", "room-2"));
 
         handler.onConnect(client, user);
@@ -53,7 +56,8 @@ class ConnectionLoginHandlerTest {
         verify(roomJoinHandler).handleJoinRoom(client, "room-1");
         verify(roomJoinHandler).handleJoinRoom(client, "room-2");
         verify(connectedUsers).set(user.id(), user);
-        verify(client).joinRooms(Set.of("user:" + user.id(), "room-list"));
+        verify(client).joinRooms(Set.of(
+                "user:" + user.id(), "socket:" + socketId, "room-list"));
     }
 
     @Test
@@ -69,8 +73,28 @@ class ConnectionLoginHandlerTest {
 
         verify(roomLeaveHandler).handleLeaveRoom(client, "room-1");
         verify(connectedUsers).del(user.id());
-        verify(client).leaveRooms(Set.of("user:" + user.id(), "room-list"));
+        verify(client).leaveRooms(Set.of(
+                "user:" + user.id(), "socket:" + socketId, "room-list"));
         verify(client).del("user");
+        verify(client).disconnect();
+    }
+
+    @Test
+    void onDisconnect_doesNotClearSharedStateForSupersededSocket() {
+        UUID oldSocketId = UUID.randomUUID();
+        SocketUser oldUser = new SocketUser(
+                "user-1", "tester", "session-1", oldSocketId.toString());
+        SocketUser replacement = new SocketUser(
+                "user-1", "tester", "session-2", UUID.randomUUID().toString());
+        when(client.get("user")).thenReturn(oldUser);
+        when(client.getSessionId()).thenReturn(oldSocketId);
+        when(connectedUsers.get(oldUser.id())).thenReturn(replacement);
+
+        handler.onDisconnect(client);
+
+        verify(userRooms, never()).get(oldUser.id());
+        verify(roomLeaveHandler, never()).handleLeaveRoom(client, "room-1");
+        verify(connectedUsers, never()).del(oldUser.id());
         verify(client).disconnect();
     }
 }

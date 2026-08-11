@@ -1,17 +1,20 @@
 package com.ktb.chatapp.websocket.socketio;
 
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
 @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
-@RequiredArgsConstructor
 public class ConnectedUsers {
     
     private static final String USER_SOCKET_KEY_PREFIX = "conn_users:userid:";
     
     private final ChatDataStore chatDataStore;
+
+    public ConnectedUsers(@Qualifier("connectedUsersStore") ChatDataStore chatDataStore) {
+        this.chatDataStore = chatDataStore;
+    }
     
     public SocketUser get(String userId) {
         return chatDataStore.get(buildKey(userId), SocketUser.class).orElse(null);

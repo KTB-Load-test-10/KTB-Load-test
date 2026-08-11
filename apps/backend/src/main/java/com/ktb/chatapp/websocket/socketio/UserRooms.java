@@ -2,7 +2,7 @@ package com.ktb.chatapp.websocket.socketio;
 
 import java.util.HashSet;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -13,12 +13,15 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
-@RequiredArgsConstructor
 public class UserRooms {
 
     private static final String USER_ROOM_KEY_PREFIX = "userroom:roomids:";
 
     private final ChatDataStore chatDataStore;
+
+    public UserRooms(@Qualifier("userRoomsStore") ChatDataStore chatDataStore) {
+        this.chatDataStore = chatDataStore;
+    }
 
     /**
      * Get all room IDs for a user
@@ -40,9 +43,7 @@ public class UserRooms {
      * @param roomId the room ID to add to the user's room set
      */
     public void add(String userId, String roomId) {
-        Set<String> rooms = new HashSet<>(get(userId));
-        rooms.add(roomId);
-        chatDataStore.set(buildKey(userId), rooms);
+        chatDataStore.addToSet(buildKey(userId), roomId);
     }
 
     /**
@@ -52,13 +53,7 @@ public class UserRooms {
      * @param roomId the room ID to remove
      */
     public void remove(String userId, String roomId) {
-        Set<String> rooms = new HashSet<>(get(userId));
-        rooms.remove(roomId);
-        if (rooms.isEmpty()) {
-            chatDataStore.delete(buildKey(userId));
-        } else {
-            chatDataStore.set(buildKey(userId), rooms);
-        }
+        chatDataStore.removeFromSet(buildKey(userId), roomId);
     }
 
     /**

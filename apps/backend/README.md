@@ -91,6 +91,9 @@ make verify-java
 | `MONGO_URI` | ✅ | 없음 | MongoDB 연결 문자열              |
 | `REDIS_HOST` | ✅ | 없음 | Redis 호스트                    |
 | `REDIS_PORT` | ✅ | 없음 | Redis 포트                      |
+| `SOCKET_REDIS_HOST` | 다중 노드 시 ✅ | 빈 값(메모리 저장소) | Socket.IO 클러스터 전용 Redis 호스트. 인증 Redis와 분리 |
+| `SOCKET_REDIS_PORT` | ❌ | `6379` | Socket.IO 클러스터 전용 Redis 포트 |
+| `SOCKET_REDIS_PASSWORD` | 환경에 따라 | 빈 값 | Socket.IO 클러스터 전용 Redis 비밀번호 |
 | `PORT` | ❌ | `5001` | HTTP API 포트 (`server.port`) |
 | `WS_PORT` | ❌ | `5002` | Socket.IO 서버 포트             |
 | `CORS_ALLOWED_ORIGINS` | ❌ | `*` | REST API CORS 허용 Origin 목록. 쉼표로 구분 |
@@ -104,6 +107,11 @@ make verify-java
 | `S3_PREFIX` | ❌ | 없음 | 환경별 객체 key prefix (예: `production`) |
 
 `.env.template` 파일을 복사해 기본 값을 채운 뒤 필요에 따라 수정하세요.
+
+`SOCKET_REDIS_HOST`가 설정되면 애플리케이션 시작 중 전용 Redis에 실제 명령을 보내
+연결을 검증한다. 연결할 수 없거나 인증에 실패하면 Socket.IO 서버가 메모리 모드로
+조용히 대체되지 않고 애플리케이션 시작이 실패한다. 이 설정은
+`spring.data.redis.*` 기반 인증 세션/Rate Limit Redis와 별도의 Redisson 연결이다.
 
 예시:
 ```bash

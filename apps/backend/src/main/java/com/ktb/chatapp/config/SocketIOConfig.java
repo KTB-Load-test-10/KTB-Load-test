@@ -7,12 +7,17 @@ import com.corundumstudio.socketio.annotation.SpringAnnotationScanner;
 import com.corundumstudio.socketio.namespace.Namespace;
 import com.corundumstudio.socketio.protocol.JacksonJsonSupport;
 import com.corundumstudio.socketio.store.MemoryStoreFactory;
+import com.corundumstudio.socketio.store.RedissonStoreFactory;
+import com.corundumstudio.socketio.store.StoreFactory;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.ktb.chatapp.websocket.socketio.ChatDataStore;
-import com.ktb.chatapp.websocket.socketio.LocalChatDataStore;
+import com.ktb.chatapp.websocket.socketio.StoreFactoryChatDataStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.Redisson;
+import org.redisson.api.RedissonClient;
+import org.redisson.config.Config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,6 +25,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Role;
+import org.springframework.util.StringUtils;
 
 import static org.springframework.beans.factory.config.BeanDefinition.ROLE_INFRASTRUCTURE;
 
@@ -43,8 +49,57 @@ public class SocketIOConfig {
     @Value("${socketio.server.tcp-no-delay:true}")
     private boolean tcpNoDelay;
 
+    @Value("${socketio.redis.host:}")
+    private String socketRedisHost;
+
+    @Value("${socketio.redis.port:6379}")
+    private int socketRedisPort;
+
+    @Value("${socketio.redis.password:}")
+    private String socketRedisPassword;
+
+    @Bean
+    public StoreFactory socketIOStoreFactory() {
+        if (!StringUtils.hasText(socketRedisHost)) {
+            log.warn("SOCKET_REDIS_HOST is not configured; Socket.IO is using a single-node in-memory store");
+            return new MemoryStoreFactory();
+        }
+
+        Config redissonConfig = new Config();
+        var singleServer = redissonConfig.useSingleServer()
+                .setAddress("redis://" + socketRedisHost + ':' + socketRedisPort)
+                .setConnectTimeout(3_000)
+                .setTimeout(3_000)
+                .setRetryAttempts(1);
+        if (StringUtils.hasText(socketRedisPassword)) {
+            singleServer.setPassword(socketRedisPassword);
+        }
+
+        RedissonClient redissonClient = null;
+        try {
+            redissonClient = Redisson.create(redissonConfig);
+            // Redisson creates connections lazily in some configurations. Force a command so a
+            // configured but unreachable Socket Redis fails application startup immediately.
+            redissonClient.getBucket("chatapp:socketio:startup-check").isExists();
+            log.info("Socket.IO distributed Redis store connected: {}:{}",
+                    socketRedisHost, socketRedisPort);
+            return new RedissonStoreFactory(redissonClient);
+        } catch (Exception e) {
+            if (redissonClient != null) {
+                redissonClient.shutdown();
+            }
+            throw new IllegalStateException(
+                    "Failed to connect to dedicated Socket.IO Redis at "
+                            + socketRedisHost + ':' + socketRedisPort,
+                    e);
+        }
+    }
+
     @Bean(initMethod = "start", destroyMethod = "stop")
-    public SocketIOServer socketIOServer(AuthTokenListener authTokenListener, MeterRegistry meterRegistry) {
+    public SocketIOServer socketIOServer(
+            AuthTokenListener authTokenListener,
+            MeterRegistry meterRegistry,
+            StoreFactory socketIOStoreFactory) {
         com.corundumstudio.socketio.Configuration config = new com.corundumstudio.socketio.Configuration();
         config.setHostname(host);
         config.setPort(port);
@@ -65,10 +120,10 @@ public class SocketIOConfig {
         config.setUpgradeTimeout(10000);
 
         config.setJsonSupport(new JacksonJsonSupport(new JavaTimeModule()));
-        config.setStoreFactory(new MemoryStoreFactory()); // 단일노드 전용
+        config.setStoreFactory(socketIOStoreFactory);
 
-        log.info("Socket.IO server configured on {}:{} with {} boss threads and {} worker threads",
-                 host, port, config.getBossThreads(), config.getWorkerThreads());
+        log.info("Socket.IO server configured on {}:{} with store={}, transports={}",
+                host, port, socketIOStoreFactory.getClass().getSimpleName(), config.getTransports());
         var socketIOServer = new SocketIOServer(config);
         socketIOServer.getNamespace(Namespace.DEFAULT_NAME).addAuthTokenListener(authTokenListener);
         socketIOServer.getNamespace(Namespace.DEFAULT_NAME).addEventInterceptor((client, name, data, ack) -> {
@@ -95,10 +150,15 @@ public class SocketIOConfig {
         return new SpringAnnotationScanner(socketIOServer);
     }
     
-    // 인메모리 저장소, 단일 노드 환경에서만 사용
-    @Bean
-    @ConditionalOnProperty(name = "socketio.enabled", havingValue = "true", matchIfMissing = true)
-    public ChatDataStore chatDataStore() {
-        return new LocalChatDataStore();
+    @Bean("connectedUsersStore")
+    public ChatDataStore connectedUsersStore(StoreFactory socketIOStoreFactory) {
+        return new StoreFactoryChatDataStore(
+                socketIOStoreFactory, "chatapp:socketio:connected-users");
+    }
+
+    @Bean("userRoomsStore")
+    public ChatDataStore userRoomsStore(StoreFactory socketIOStoreFactory) {
+        return new StoreFactoryChatDataStore(
+                socketIOStoreFactory, "chatapp:socketio:user-rooms");
     }
 }

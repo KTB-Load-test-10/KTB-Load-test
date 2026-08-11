@@ -32,6 +32,12 @@ public interface ChatDataStore {
      * @param key the storage key
      */
     void delete(String key);
+
+    /** Atomically add a value to a set stored under the key. */
+    void addToSet(String key, String value);
+
+    /** Atomically remove a value from a set stored under the key. */
+    void removeFromSet(String key, String value);
     
     int size();
 }

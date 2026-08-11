@@ -1,5 +1,7 @@
 package com.ktb.chatapp.websocket.socketio;
 
+import java.io.Serializable;
+
 /**
  * Socket User Record
  * @param id user id
@@ -7,5 +9,5 @@ package com.ktb.chatapp.websocket.socketio;
  * @param authSessionId user auth session id
  * @param socketId user websocket session id
  */
-public record SocketUser(String id, String name, String authSessionId, String socketId) {
+public record SocketUser(String id, String name, String authSessionId, String socketId) implements Serializable {
 }
