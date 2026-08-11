@@ -67,16 +67,16 @@ class RateLimitServiceUnitTest {
     }
 
     @Test
-    @DisplayName("Redis 장애 시 기존 정책대로 요청을 허용한다")
-    void checkRateLimit_FailsOpenWhenStoreFails() {
+    @DisplayName("Redis 장애 시 rate limit 우회를 막기 위해 요청을 차단한다")
+    void checkRateLimit_FailsClosedWhenStoreFails() {
         when(rateLimitStore.increment(eq(CLIENT_ID), eq(30L)))
                 .thenThrow(new IllegalStateException("store down"));
 
         RateLimitCheckResult result = new RateLimitService(rateLimitStore)
                 .checkRateLimit(CLIENT_ID, 3, Duration.ofSeconds(30));
 
-        assertThat(result.allowed()).isTrue();
-        assertThat(result.remaining()).isEqualTo(3);
+        assertThat(result.allowed()).isFalse();
+        assertThat(result.remaining()).isZero();
         assertThat(result.retryAfterSeconds()).isEqualTo(30);
     }
 }

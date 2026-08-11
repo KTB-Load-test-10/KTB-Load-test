@@ -18,7 +18,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,17 +36,16 @@ class SessionServiceUnitTest {
     private SessionService sessionService;
 
     @Test
-    @DisplayName("세션 생성은 기존 사용자 세션을 제거한 뒤 새 세션을 저장한다")
-    void createSession_RemovesExistingSessionsBeforeSave() {
+    @DisplayName("세션 생성은 기존 사용자 세션을 원자적으로 교체한다")
+    void createSession_ReplacesExistingSessionBeforeSave() {
         ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
-        when(sessionStore.save(any(Session.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sessionStore.replace(any(Session.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         SessionCreationResult result = sessionService.createSession(
                 USER_ID,
                 new SessionMetadata("agent", "127.0.0.1", "device"));
 
-        verify(sessionStore).deleteAll(USER_ID);
-        verify(sessionStore).save(sessionCaptor.capture());
+        verify(sessionStore).replace(sessionCaptor.capture());
         Session savedSession = sessionCaptor.getValue();
         assertThat(result.getSessionId()).isEqualTo(savedSession.getSessionId());
         assertThat(result.getExpiresIn()).isEqualTo(SessionService.SESSION_TTL_SEC);
@@ -58,7 +56,7 @@ class SessionServiceUnitTest {
     @Test
     @DisplayName("세션 생성 중 저장소 실패는 RuntimeException으로 래핑된다")
     void createSession_StoreFailure_ThrowsRuntimeException() {
-        doThrow(new IllegalStateException("store down")).when(sessionStore).deleteAll(USER_ID);
+        when(sessionStore.replace(any(Session.class))).thenThrow(new IllegalStateException("store down"));
 
         RuntimeException exception = assertThrows(
                 RuntimeException.class,

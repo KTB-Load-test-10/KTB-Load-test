@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -23,7 +24,6 @@ import tools.jackson.databind.ObjectMapper;
 public class SessionRedisStore implements SessionStore {
 
     private static final String KEY_PREFIX = "chat:session:user:";
-    private static final long ACTIVITY_REFRESH_INTERVAL_MS = Duration.ofSeconds(30).toMillis();
     // 중요: 세션 ID·유효 시간을 확인한 뒤 JSON과 Redis TTL을 함께 갱신한다.
     private static final DefaultRedisScript<String> VALIDATE_AND_TOUCH = new DefaultRedisScript<>("""
             local value = redis.call('GET', KEYS[1])
@@ -57,6 +57,9 @@ public class SessionRedisStore implements SessionStore {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
 
+    @Value("${app.auth.session.touch-interval-seconds:60}")
+    private long touchIntervalSeconds;
+
     @Override
     public Optional<Session> findByUserId(String userId) {
         return deserialize(redisTemplate.opsForValue().get(key(userId)));
@@ -70,6 +73,12 @@ public class SessionRedisStore implements SessionStore {
     }
 
     @Override
+    public Session replace(Session session) {
+        // 중요: Redis SET은 동일 사용자 키를 원자적으로 덮어써 삭제 구간을 만들지 않는다.
+        return save(session);
+    }
+
+    @Override
     public Optional<Session> validateAndTouch(
             String userId, String sessionId, long activeAfter, long now, Instant expiresAt) {
         long ttlMillis = Math.max(1L, Duration.between(Instant.now(), expiresAt).toMillis());
@@ -80,7 +89,7 @@ public class SessionRedisStore implements SessionStore {
                 Long.toString(activeAfter),
                 Long.toString(now),
                 expiresAt.toString(),
-                Long.toString(ACTIVITY_REFRESH_INTERVAL_MS),
+                Long.toString(Duration.ofSeconds(touchIntervalSeconds).toMillis()),
                 Long.toString(ttlMillis));
         return deserialize(value);
     }

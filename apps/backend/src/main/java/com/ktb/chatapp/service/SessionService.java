@@ -38,9 +38,6 @@ public class SessionService {
 
     public SessionCreationResult createSession(String userId, SessionMetadata metadata) {
         try {
-            // Remove all existing user sessions
-            removeAllUserSessions(userId);
-
             String sessionId = generateSessionId();
             long now = Instant.now().toEpochMilli();
             
@@ -53,7 +50,8 @@ public class SessionService {
                     .expiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC))
                     .build();
 
-            session = sessionStore.save(session);
+            // 중요: Redis는 기존 값을 단일 overwrite로 교체해 이전 토큰을 즉시 무효화한다.
+            session = sessionStore.replace(session);
             
             SessionData sessionData = toSessionData(session);
 
