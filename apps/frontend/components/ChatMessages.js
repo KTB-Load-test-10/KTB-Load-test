@@ -1,10 +1,11 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Spinner, Text, VStack } from '@vapor-ui/core';
 import SystemMessage from './SystemMessage';
 import FileMessage from './FileMessage';
 import UserMessage from './UserMessage';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 import { useAutoScroll } from '../hooks/useAutoScroll';
+import socketClient from '@/lib/socket/socketClient';
 
 const LoadingIndicator = React.memo(() => (
   <div className="loading-messages">
@@ -47,30 +48,68 @@ const ChatMessages = ({
   );
 
   // 자동 스크롤 훅 (스크롤 복원 기능 포함)
-  const { containerRef, scrollToBottom, isNearBottom } = useAutoScroll(
+  const { containerRef } = useAutoScroll(
     messages,
     currentUser?.id,
     loadingMessages,
     100 // 하단 100px 이내면 자동 스크롤
   );
+  const currentUserId = currentUser?._id || currentUser?.id;
   const isMine = useCallback((msg) => {
-    if (!msg?.sender || !currentUser?.id) return false;
+    if (!msg?.sender || !currentUserId) return false;
     
     return (
-      msg.sender._id === currentUser.id || 
-      msg.sender.id === currentUser.id ||
-      msg.sender === currentUser.id
+      msg.sender._id === currentUserId ||
+      msg.sender.id === currentUserId ||
+      msg.sender === currentUserId
     );
-  }, [currentUser?.id]);
+  }, [currentUserId]);
 
-  const allMessages = useMemo(() => {
-    if (!Array.isArray(messages)) return [];
+  // 메시지 상태는 병합 시점부터 시간순을 유지하므로 렌더마다 다시 정렬하지 않는다.
+  const allMessages = useMemo(() => Array.isArray(messages) ? messages : [], [messages]);
+  const readBatchRef = useRef(new Set());
+  const readBatchTimerRef = useRef(null);
+  const participantIds = useMemo(() => new Set(
+    (room?.participants || []).map(participant => String(participant?._id || participant?.id))
+  ), [room?.participants]);
+  const flushReadBatch = useCallback(() => {
+    readBatchTimerRef.current = null;
+    const messageIds = Array.from(readBatchRef.current);
+    readBatchRef.current.clear();
+    if (messageIds.length > 0 && socketClient.canSend()) {
+      socketClient.markMessagesAsRead(messageIds);
+    }
+  }, []);
 
-    return [...messages].sort((a, b) => {
-      if (!a?.timestamp || !b?.timestamp) return 0;
-      return new Date(a.timestamp) - new Date(b.timestamp);
-    });
-  }, [messages]);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !currentUserId || typeof IntersectionObserver === 'undefined') return;
+
+    const queueRead = (messageId) => {
+      readBatchRef.current.add(messageId);
+      if (!readBatchTimerRef.current) {
+        readBatchTimerRef.current = setTimeout(flushReadBatch, 75);
+      }
+    };
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          queueRead(entry.target.dataset.readMessageId);
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { root: container, threshold: 0.5 });
+
+    container.querySelectorAll('[data-read-message-id]').forEach(node => observer.observe(node));
+    return () => {
+      observer.disconnect();
+    };
+  }, [allMessages, containerRef, currentUserId, flushReadBatch]);
+
+  useEffect(() => () => {
+    if (readBatchTimerRef.current) clearTimeout(readBatchTimerRef.current);
+    flushReadBatch();
+  }, [flushReadBatch]);
 
   const renderMessage = useCallback((msg, idx) => {
     if (!msg) return null;
@@ -78,6 +117,7 @@ const ChatMessages = ({
     const commonProps = {
       currentUser,
       room,
+      participantIds,
       onReactionAdd,
       onReactionRemove
     };
@@ -90,6 +130,11 @@ const ChatMessages = ({
     return (
       <div
         key={msg._id || `msg-${idx}`}
+        data-read-message-id={
+          msg.type !== 'system' && msg._id && !msg.readers?.some(reader =>
+            String(reader.userId || reader._id) === String(currentUserId)
+          ) ? msg._id : undefined
+        }
         style={{
           contentVisibility: 'auto',
           containIntrinsicSize: '1px 96px',
@@ -104,7 +149,7 @@ const ChatMessages = ({
       />
       </div>
     );
-  }, [currentUser, room, isMine, onReactionAdd, onReactionRemove]);
+  }, [currentUser, room, participantIds, currentUserId, isMine, onReactionAdd, onReactionRemove]);
 
   return (
     <VStack

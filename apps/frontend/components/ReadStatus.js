@@ -1,98 +1,24 @@
-import React, { useMemo, useEffect, useState, useCallback, useRef } from 'react';
+import React, { useMemo } from 'react';
 import { ConfirmOutlineIcon } from '@vapor-ui/icons';
 import { Text, HStack } from '@vapor-ui/core';
-import socketClient from '@/lib/socket/socketClient';
 
 const ReadStatus = ({ 
   messageType = 'text',
   participants = [],
+  participantIds,
   readers = [],
   className = '',
-  messageId = null,
-  messageRef = null, // 메시지 요소의 ref 추가
-  currentUserId = null // 현재 사용자 ID 추가
 }) => {
-  const [hasMarkedAsRead, setHasMarkedAsRead] = useState(false);
-  const statusRef = useRef(null);
-  const observerRef = useRef(null);
-
-  // 읽지 않은 참여자 명단 생성 
-  const unreadParticipants = useMemo(() => {
-    if (messageType === 'system') return [];
-    
-    return participants.filter(participant => 
-      !readers.some(reader => 
-        reader.userId === participant._id || 
-        reader.userId === participant.id
-      )
-    );
-  }, [participants, readers, messageType]);
-
-  // 읽지 않은 참여자 수 계산
   const unreadCount = useMemo(() => {
-    if (messageType === 'system') {
-      return 0;
-    }
-    return unreadParticipants.length;
-  }, [unreadParticipants.length, messageType]);
-
-  // 메시지를 읽음으로 표시하는 함수
-  const markMessageAsRead = useCallback(async () => {
-    if (!messageId || !currentUserId || hasMarkedAsRead || 
-        messageType === 'system' || !socketClient.canSend()) {
-      return;
-    }
-
-    try {
-      // Socket.IO를 통해 서버에 읽음 상태 전송
-      socketClient.markMessagesAsRead([messageId]);
-
-      setHasMarkedAsRead(true);
-
-    } catch (error) {
-      console.error('Error marking message as read:', error);
-    }
-  }, [messageId, currentUserId, hasMarkedAsRead, messageType]);
-
-  // Intersection Observer 설정
-  useEffect(() => {
-    if (!messageRef?.current || !currentUserId || hasMarkedAsRead || messageType === 'system') {
-      return;
-    }
-
-    // 이미 읽은 메시지인지 확인
-    const isAlreadyRead = readers.some(reader => 
-      reader.userId === currentUserId
+    if (messageType === 'system') return 0;
+    const ids = participantIds || new Set(
+      participants.map(participant => String(participant?._id || participant?.id))
     );
-
-    if (isAlreadyRead) {
-      setHasMarkedAsRead(true);
-      return;
-    }
-
-    const observerOptions = {
-      root: null,
-      rootMargin: '0px',
-      threshold: 0.5 // 메시지의 50%가 보여야 읽음으로 처리
-    };
-
-    const handleIntersect = (entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting && !hasMarkedAsRead) {
-          markMessageAsRead();
-        }
-      });
-    };
-
-    observerRef.current = new IntersectionObserver(handleIntersect, observerOptions);
-    observerRef.current.observe(messageRef.current);
-
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, [messageRef, currentUserId, hasMarkedAsRead, messageType, readers, markMessageAsRead]);
+    const readParticipantIds = new Set(
+      readers.map(reader => String(reader.userId || reader._id)).filter(id => ids.has(id))
+    );
+    return Math.max(0, ids.size - readParticipantIds.size);
+  }, [participantIds, participants, readers, messageType]);
 
   // 시스템 메시지는 읽음 상태 표시 안 함
   if (messageType === 'system') {
@@ -104,7 +30,6 @@ const ReadStatus = ({
     return (
       <HStack
         className={className}
-        ref={statusRef}
         $css={{ gap: '$050', alignItems: 'center' }}
         role="status"
         aria-label="모든 참여자가 메시지를 읽었습니다"
@@ -123,7 +48,6 @@ const ReadStatus = ({
   return (
     <HStack
       className={className}
-      ref={statusRef}
       $css={{ gap: '$050', alignItems: 'center' }}
       role="status"
       aria-label={`${unreadCount}명이 메시지를 읽지 않았습니다`}
