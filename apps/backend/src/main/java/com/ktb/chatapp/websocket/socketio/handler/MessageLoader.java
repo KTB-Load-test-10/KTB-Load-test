@@ -11,6 +11,7 @@ import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,7 +73,11 @@ public class MessageLoader {
         List<Message> sortedMessages = messages.reversed();
         
         var messageIds = sortedMessages.stream().map(Message::getId).toList();
-        messageReadStatusService.updateReadStatus(messageIds, userId);
+        messageReadStatusService.updateReadStatus(roomId, messageIds, userId);
+
+        // 중요: bulk update 직후 응답의 readers도 현재 사용자 상태와 일치시킨다.
+        LocalDateTime readAt = LocalDateTime.now();
+        sortedMessages.forEach(message -> addReaderIfMissing(message, userId, readAt));
 
         Map<String, User> usersById = loadUsersById(sortedMessages);
         Map<String, File> filesById = loadFilesById(sortedMessages);
@@ -124,5 +129,14 @@ public class MessageLoader {
 
     private static <T> T getByNullableId(Map<String, T> valuesById, String id) {
         return id == null ? null : valuesById.get(id);
+    }
+
+    private void addReaderIfMissing(Message message, String userId, LocalDateTime readAt) {
+        if (message.getReaders() == null) {
+            message.setReaders(new ArrayList<>());
+        }
+        if (message.getReaders().stream().noneMatch(reader -> userId.equals(reader.getUserId()))) {
+            message.getReaders().add(Message.MessageReader.builder().userId(userId).readAt(readAt).build());
+        }
     }
 }

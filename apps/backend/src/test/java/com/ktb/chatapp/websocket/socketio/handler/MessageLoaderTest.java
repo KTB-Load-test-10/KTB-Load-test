@@ -83,7 +83,8 @@ class MessageLoaderTest {
         
         lenient().when(userRepository.findAllById(anySet()))
                 .thenReturn(List.of(testUser));
-        lenient().doNothing().when(messageReadStatusService).updateReadStatus(anyList(), anyString());
+        lenient().when(messageReadStatusService.updateReadStatus(anyString(), anyList(), anyString()))
+                .thenReturn(0L);
     }
     
     private Message createMessage(String id, LocalDateTime timestamp) {
@@ -148,7 +149,7 @@ class MessageLoaderTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> readIdsCaptor = ArgumentCaptor.forClass(List.class);
-        verify(messageReadStatusService).updateReadStatus(readIdsCaptor.capture(), eq(userId));
+        verify(messageReadStatusService).updateReadStatus(eq(roomId), readIdsCaptor.capture(), eq(userId));
         assertThat(readIdsCaptor.getValue())
                 .hasSize(30)
                 .doesNotContain(overflowMessage.getId());

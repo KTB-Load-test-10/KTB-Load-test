@@ -74,30 +74,26 @@ public class SessionService {
                 return SessionValidationResult.invalid("INVALID_PARAMETERS", "유효하지 않은 세션 파라미터");
             }
 
-            Session session = sessionStore.findByUserId(userId).orElse(null);
-            
+            long now = Instant.now().toEpochMilli();
+            // 중요: 세션 검증과 sliding TTL 갱신을 하나의 원자적 저장소 연산으로 합친다.
+            Session session = sessionStore.validateAndTouch(
+                    userId,
+                    sessionId,
+                    now - SESSION_TIMEOUT,
+                    now,
+                    Instant.now().plusSeconds(SESSION_TTL_SEC))
+                    .orElse(null);
             if (session == null) {
-                log.warn("No session found for userId: {}", userId);
+                // 성공 경로는 한 번만 왕복한다. 실패할 때만 원인을 확인해 기존 오류 계약을 유지한다.
+                Session existing = sessionStore.findByUserId(userId).orElse(null);
+                if (existing != null && sessionId.equals(existing.getSessionId())
+                        && now - existing.getLastActivity() > SESSION_TIMEOUT) {
+                    removeSession(userId, sessionId);
+                    return SessionValidationResult.invalid("SESSION_EXPIRED", "세션이 만료되었습니다.");
+                }
+                log.warn("Invalid session for userId: {}", userId);
                 return SessionValidationResult.invalid("INVALID_SESSION", "세션을 찾을 수 없습니다.");
             }
-
-            if (!sessionId.equals(session.getSessionId())) {
-                log.warn("Session ID mismatch for userId: {}. Provided: {}, Expected: {}", userId, sessionId, session.getSessionId());
-                return SessionValidationResult.invalid("INVALID_SESSION", "잘못된 세션 ID입니다.");
-            }
-
-            // Check if session has timed out
-            long now = Instant.now().toEpochMilli();
-            if (now - session.getLastActivity() > SESSION_TIMEOUT) {
-                log.warn("Session timed out for userId: {}, sessionId: {}", userId, sessionId);
-                removeSession(userId, sessionId);
-                return SessionValidationResult.invalid("SESSION_EXPIRED", "세션이 만료되었습니다.");
-            }
-
-            // Update last activity
-            session.setLastActivity(now);
-            session.setExpiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC));
-            session = sessionStore.save(session);
 
             SessionData sessionData = toSessionData(session);
             return SessionValidationResult.valid(sessionData);

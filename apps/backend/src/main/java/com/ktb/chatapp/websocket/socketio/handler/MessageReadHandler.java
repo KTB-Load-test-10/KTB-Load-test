@@ -7,13 +7,14 @@ import com.ktb.chatapp.dto.MarkAsReadRequest;
 import com.ktb.chatapp.dto.MessagesReadResponse;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.Room;
-import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
-import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.StreamSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,7 +36,6 @@ public class MessageReadHandler {
     private final MessageReadStatusService messageReadStatusService;
     private final MessageRepository messageRepository;
     private final RoomRepository roomRepository;
-    private final UserRepository userRepository;
     
     @OnEvent(MARK_MESSAGES_AS_READ)
     public void handleMarkAsRead(SocketIOClient client, MarkAsReadRequest data) {
@@ -50,17 +50,16 @@ public class MessageReadHandler {
                 return;
             }
             
-            String roomId = messageRepository.findById(data.getMessageIds().getFirst())
-                    .map(Message::getRoomId).orElse(null);
+            List<Message> messages = StreamSupport.stream(
+                    messageRepository.findAllById(data.getMessageIds()).spliterator(), false).toList();
+            Set<String> requestedIds = Set.copyOf(data.getMessageIds());
+            Set<String> foundIds = messages.stream().map(Message::getId).collect(java.util.stream.Collectors.toSet());
+            Set<String> roomIds = messages.stream().map(Message::getRoomId).collect(java.util.stream.Collectors.toSet());
+            String roomId = roomIds.size() == 1 ? roomIds.iterator().next() : null;
             
-            if (roomId == null || roomId.isBlank()) {
+            // 중요: 누락되거나 다른 방의 메시지가 섞인 요청은 일부만 갱신하지 않고 거부한다.
+            if (roomId == null || roomId.isBlank() || !foundIds.equals(requestedIds)) {
                 client.sendEvent(ERROR, Map.of("message", "Invalid room"));
-                return;
-            }
-
-            User user = userRepository.findById(userId).orElse(null);
-            if (user == null) {
-                client.sendEvent(ERROR, Map.of("message", "User not found"));
                 return;
             }
 
@@ -70,7 +69,7 @@ public class MessageReadHandler {
                 return;
             }
             
-            messageReadStatusService.updateReadStatus(data.getMessageIds(), userId);
+            messageReadStatusService.updateReadStatus(roomId, data.getMessageIds(), userId);
 
             MessagesReadResponse response = new MessagesReadResponse(userId, data.getMessageIds());
 

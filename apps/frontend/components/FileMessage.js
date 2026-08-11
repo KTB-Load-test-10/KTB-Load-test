@@ -21,7 +21,8 @@ const FileMessage = ({
   currentUser = null,
   onReactionAdd,
   onReactionRemove,
-  room = null
+  room = null,
+  participantIds
 }) => {
   const { user } = useAuth();
   const [error, setError] = useState(null);
@@ -363,10 +364,8 @@ const FileMessage = ({
             <ReadStatus
               messageType={msg.type}
               participants={room?.participants || []}
+              participantIds={participantIds}
               readers={msg.readers || []}
-              messageId={msg._id}
-              messageRef={messageDomRef}
-              currentUserId={currentUser?._id || currentUser?.id}
             />
           </HStack>
         </div>
