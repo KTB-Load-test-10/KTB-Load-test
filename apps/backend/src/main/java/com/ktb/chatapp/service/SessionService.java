@@ -2,6 +2,7 @@ package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.model.Session;
 import com.ktb.chatapp.service.session.SessionStore;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ public class SessionService {
     private final SessionStore sessionStore;
     public static final long SESSION_TTL_SEC = DurationStyle.detectAndParse(SESSION_TTL).getSeconds();
     private static final long SESSION_TIMEOUT = SESSION_TTL_SEC * 1000;
+    public static final long ACTIVITY_REFRESH_INTERVAL_MS = Duration.ofSeconds(30).toMillis();
 
     private String generateSessionId() {
         return UUID.randomUUID().toString().replace("-", "");

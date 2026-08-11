@@ -23,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 public class SessionRedisStore implements SessionStore {
 
     private static final String KEY_PREFIX = "chat:session:user:";
+    private static final long ACTIVITY_REFRESH_INTERVAL_MS = Duration.ofSeconds(30).toMillis();
     // 중요: 세션 ID·유효 시간을 확인한 뒤 JSON과 Redis TTL을 함께 갱신한다.
     private static final DefaultRedisScript<String> VALIDATE_AND_TOUCH = new DefaultRedisScript<>("""
             local value = redis.call('GET', KEYS[1])
@@ -31,11 +32,16 @@ public class SessionRedisStore implements SessionStore {
             if session['sessionId'] ~= ARGV[1] or tonumber(session['lastActivity']) < tonumber(ARGV[2]) then
                 return nil
             end
-            session['lastActivity'] = tonumber(ARGV[3])
-            session['expiresAt'] = ARGV[4]
-            local updated = cjson.encode(session)
-            redis.call('SET', KEYS[1], updated, 'PX', ARGV[5])
-            return updated
+            local lastActivity = tonumber(session['lastActivity'])
+            local now = tonumber(ARGV[3])
+            if now - lastActivity >= tonumber(ARGV[5]) then
+                session['lastActivity'] = now
+                session['expiresAt'] = ARGV[4]
+                local updated = cjson.encode(session)
+                redis.call('SET', KEYS[1], updated, 'PX', ARGV[6])
+                return updated
+            end
+            return value
             """, String.class);
     private static final DefaultRedisScript<Long> DELETE_IF_SESSION_MATCHES = new DefaultRedisScript<>("""
             local value = redis.call('GET', KEYS[1])
@@ -74,6 +80,7 @@ public class SessionRedisStore implements SessionStore {
                 Long.toString(activeAfter),
                 Long.toString(now),
                 expiresAt.toString(),
+                Long.toString(ACTIVITY_REFRESH_INTERVAL_MS),
                 Long.toString(ttlMillis));
         return deserialize(value);
     }

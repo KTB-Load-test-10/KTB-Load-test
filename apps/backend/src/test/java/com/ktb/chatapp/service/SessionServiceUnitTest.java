@@ -119,6 +119,52 @@ class SessionServiceUnitTest {
     }
 
     @Test
+    @DisplayName("세션 검증은 원자적 validateAndTouch 결과를 사용한다")
+    void validateSession_UsesAtomicValidateAndTouchResult() {
+        Session recentSession = activeSessionWithLastActivity(Instant.now().toEpochMilli());
+        when(sessionStore.validateAndTouch(
+                eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenReturn(Optional.of(recentSession));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        assertThat(result.getSession().getSessionId()).isEqualTo(SESSION_ID);
+        verify(sessionStore, never()).findByUserId(anyString());
+        verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    @Test
+    @DisplayName("세션 검증은 별도 저장 없이 validateAndTouch를 한 번만 호출한다")
+    void validateSession_CallsValidateAndTouchOnceWithoutSeparateSave() {
+        long previousActivity = Instant.now().toEpochMilli()
+                - SessionService.ACTIVITY_REFRESH_INTERVAL_MS
+                - 1_000;
+        Session staleSession = activeSessionWithLastActivity(previousActivity);
+        when(sessionStore.validateAndTouch(
+                eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenReturn(Optional.of(staleSession));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        verify(sessionStore).validateAndTouch(
+                eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class));
+        verify(sessionStore, never()).findByUserId(anyString());
+        verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    private Session activeSessionWithLastActivity(long lastActivity) {
+        return Session.builder()
+                .userId(USER_ID)
+                .sessionId(SESSION_ID)
+                .createdAt(lastActivity)
+                .lastActivity(lastActivity)
+                .expiresAt(Instant.ofEpochMilli(lastActivity).plusSeconds(SessionService.SESSION_TTL_SEC))
+                .build();
+    }
+
+    @Test
     @DisplayName("세션 검증 중 저장소 실패는 VALIDATION_ERROR로 반환한다")
     void validateSession_StoreFailure_ReturnsValidationError() {
         when(sessionStore.validateAndTouch(eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
