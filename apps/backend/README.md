@@ -98,6 +98,10 @@ make verify-java
 | `MANAGEMENT_HEALTH_SHOW_DETAILS` | ❌ | `when_authorized` | Actuator health 상세 노출 수준 |
 | `SWAGGER_ENABLED` | ❌ | `true` | Swagger UI와 OpenAPI JSON 노출 여부 |
 | `OPENAI_API_KEY` | ❌ | `your_openai_api_key_here` | OpenAI 호출용 API Key          |
+| `FILE_STORAGE_TYPE` | ❌ | `local` | 파일 저장소 구현. 프로덕션 다중 백엔드는 `s3` 사용 |
+| `AWS_REGION` | S3 사용 시 ✅ | 없음 | S3 버킷 리전 (예: `ap-northeast-2`) |
+| `S3_BUCKET` | S3 사용 시 ✅ | 없음 | 모든 백엔드가 공유할 private S3 버킷 |
+| `S3_PREFIX` | ❌ | 없음 | 환경별 객체 key prefix (예: `production`) |
 
 `.env.template` 파일을 복사해 기본 값을 채운 뒤 필요에 따라 수정하세요.
 
@@ -109,6 +113,47 @@ cp .env.template .env
 sed -i '' "s/change_me_64_hex_chars____________________________________/$(openssl rand -hex 32)/" .env
 sed -i '' "s/change_me_32_hex_chars________________/$(openssl rand -hex 16)/" .env
 ```
+
+### 프로덕션 S3 파일 저장소
+
+로컬 개발은 기본 `LocalStorage`를 유지한다. 여러 백엔드 인스턴스를 운영하는 프로덕션에서는
+모든 인스턴스에 동일한 값을 설정한다.
+
+```env
+FILE_STORAGE_TYPE=s3
+AWS_REGION=ap-northeast-2
+S3_BUCKET=your-private-bucket
+S3_PREFIX=production
+```
+
+`S3Storage`는 AWS SDK 기본 자격 증명 체인을 사용한다. EC2에는 access key를 파일로 배포하지 말고
+동일한 IAM Instance Role을 연결한다. 애플리케이션 동작에 필요한 object 권한과 운영 진단용
+`HeadBucket` 권한은 다음처럼 분리된다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::your-private-bucket"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::your-private-bucket/production/*"
+    }
+  ]
+}
+```
+
+- 프로필 이미지는 기존 공개 API URL을 유지하며 백엔드가 S3 객체를 스트리밍한다.
+- 채팅 첨부는 방 참가자 인가 후 5분짜리 S3 presigned GET URL로 리다이렉트한다.
+- 시작 로그의 `S3 storage selected`를 모든 백엔드 EC2에서 확인해야 한다. 한 대라도 `local`이면
+  ALB 분산 결과에 따라 파일 오류가 간헐적으로 남는다.
+- CloudFront OAC는 CloudFront와 S3 사이를 보호할 뿐 viewer 권한을 대신하지 않는다. 채팅 첨부에
+  CloudFront를 붙일 때는 기존 인가 뒤 CloudFront signed URL을 발급하는 별도 단계로 진행한다.
 
 ## 애플리케이션 실행
 가장 간편한 방법은 Maven Wrapper와 Makefile을 사용하는 것입니다.

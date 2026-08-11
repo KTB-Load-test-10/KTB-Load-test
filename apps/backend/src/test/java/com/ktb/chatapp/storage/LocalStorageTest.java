@@ -52,8 +52,10 @@ class LocalStorageTest {
         Optional<Resource> resource = localStorage.open("chat/photo.jpg");
 
         assertThat(resource).isPresent();
-        assertThat(StreamUtils.copyToString(resource.get().getInputStream(), StandardCharsets.UTF_8))
-                .isEqualTo("hello");
+        try (InputStream input = resource.get().getInputStream()) {
+            assertThat(StreamUtils.copyToString(input, StandardCharsets.UTF_8))
+                    .isEqualTo("hello");
+        }
     }
 
     @Test

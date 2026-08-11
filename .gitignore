@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Frontend build and test output
+.next/
+**/.next/
+out/
+coverage/
+**/coverage/
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+
+# Backend build output
+target/
+**/target/
+
+# Maven Wrapper downloads this binary from maven-wrapper.properties when needed.
+apps/backend/.mvn/wrapper/maven-wrapper.jar
+
+# IDE and OS files
+.idea/
+**/.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Runtime files
+*.log
+logs/
+**/logs/
+
+# Local environment files; keep committed templates/examples visible.
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+!.env.template
+!**/.env.template
+!.env.production.example
+!**/.env.production.example
