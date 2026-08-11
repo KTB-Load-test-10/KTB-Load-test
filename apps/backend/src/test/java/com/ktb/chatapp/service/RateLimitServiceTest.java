@@ -1,7 +1,7 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.config.MongoTestContainer;
-import com.ktb.chatapp.config.RedisTestContainer;
+import com.ktb.chatapp.repository.RateLimitRepository;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,7 +15,7 @@ import org.springframework.test.context.TestPropertySource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@Import({MongoTestContainer.class, RedisTestContainer.class})
+@Import(MongoTestContainer.class)
 @TestPropertySource(properties = {
         "socketio.enabled=false"
 })
@@ -23,13 +23,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RateLimitServiceTest {
 
     @Autowired
-    private RateLimitService rateLimitService;
+    private RateLimitRepository rateLimitRepository;
 
-    private static int clientSequence;
+    @Autowired
+    private RateLimitService rateLimitService;
 
     @BeforeEach
     void setUp() {
-        clientSequence++;
+        rateLimitRepository.deleteAll();
     }
 
     @Test
@@ -37,7 +38,7 @@ class RateLimitServiceTest {
     void checkRateLimit_AllowsFirstRequest() {
         int maxRequests = 5;
         Duration window = Duration.ofSeconds(60);
-        String clientId = clientId("ip:127.0.0.1");
+        String clientId = "ip:127.0.0.1";
 
         long beforeCall = Instant.now().getEpochSecond();
         RateLimitCheckResult result =
@@ -58,7 +59,7 @@ class RateLimitServiceTest {
     void checkRateLimit_DeniesWhenLimitExceeded() {
         int maxRequests = 5;
         Duration window = Duration.ofSeconds(60);
-        String clientId = clientId("ip:127.0.0.1");
+        String clientId = "ip:127.0.0.1";
 
         // 한도까지 요청을 수행
         for (int i = 0; i < maxRequests; i++) {
@@ -86,7 +87,7 @@ class RateLimitServiceTest {
     void checkRateLimit_DecreasesRemainingOnConsecutiveRequests() {
         int maxRequests = 3;
         Duration window = Duration.ofSeconds(60);
-        String clientId = clientId("ip:192.168.1.1");
+        String clientId = "ip:192.168.1.1";
 
         RateLimitCheckResult result1 =
                 rateLimitService.checkRateLimit(clientId, maxRequests, window);
@@ -109,8 +110,8 @@ class RateLimitServiceTest {
     void checkRateLimit_IndependentLimitsPerClient() {
         int maxRequests = 2;
         Duration window = Duration.ofSeconds(60);
-        String clientId1 = clientId("ip:10.0.0.1");
-        String clientId2 = clientId("ip:10.0.0.2");
+        String clientId1 = "ip:10.0.0.1";
+        String clientId2 = "ip:10.0.0.2";
 
         // 첫 번째 클라이언트가 한도까지 요청
         for (int i = 0; i < maxRequests; i++) {
@@ -129,9 +130,5 @@ class RateLimitServiceTest {
                 rateLimitService.checkRateLimit(clientId2, maxRequests, window);
         assertThat(result2.allowed()).isTrue();
         assertThat(result2.remaining()).isEqualTo(1);
-    }
-
-    private String clientId(String value) {
-        return value + ":" + clientSequence;
     }
 }
