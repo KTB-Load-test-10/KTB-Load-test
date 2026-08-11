@@ -57,7 +57,7 @@ public class SessionRedisStore implements SessionStore {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
 
-    @Value("${app.auth.session.touch-interval-seconds:60}")
+    @Value("${app.auth.session.touch-interval-seconds:30}")
     private long touchIntervalSeconds;
 
     @Override
