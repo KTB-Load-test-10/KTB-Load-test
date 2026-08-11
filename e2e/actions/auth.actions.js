@@ -1,3 +1,5 @@
+const { expect } = require('@playwright/test');
+
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 /**
@@ -43,6 +45,8 @@ async function registerAction(page, userData) {
  */
 async function logoutAction(page) {
   await page.getByTestId('logout-link').click();
+  // 고정 시간 대신 로그아웃 라우팅이 실제로 끝난 상태를 기다린다.
+  await expect(page.getByTestId('login-email-input')).toBeVisible({ timeout: 10000 });
 }
 
 module.exports = {

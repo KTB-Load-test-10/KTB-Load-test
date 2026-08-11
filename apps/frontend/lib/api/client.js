@@ -75,6 +75,11 @@ export const createApiClient = ({
         return Promise.reject(error);
       }
 
+      // 로그아웃처럼 best-effort인 요청은 장애 상황에서 재시도하지 않는다.
+      if (config.skipRetry) {
+        return Promise.reject(error);
+      }
+
       if (error.response?.status === 401 && config.handleAuthError !== false) {
         clearAuthStorage();
 

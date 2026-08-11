@@ -105,23 +105,21 @@ export const AuthProviderWithRouter = ({ children, router }) => {
     return userData;
   }, [saveUser]);
 
-  // 로그아웃 (API 호출 + 상태 정리)
-  const logout = useCallback(async () => {
-    try {
-      // authService를 통해 로그아웃 API 호출
-      await authService.logout(user?.token, user?.sessionId);
-    } catch (error) {
-      console.error('Logout error:', error);
-    } finally {
-      // 소켓 연결 해제
-      socketService.disconnect();
+  // 로그아웃: 서버 세션 폐기와 사용자 화면 전환을 분리한다.
+  const logout = useCallback(() => {
+    // 중요: 로컬 상태를 비운 뒤에도 서버 요청에 필요한 인증 정보를 보존한다.
+    const token = user?.token;
+    const sessionId = user?.sessionId;
+    const logoutRequest = authService.logout(token, sessionId);
 
-      // 로컬 상태 정리
-      saveUser(null);
+    socketService.disconnect();
+    saveUser(null);
 
-      // 로그인 페이지로 이동
-      router.push('/');
-    }
+    // 뒤로 가기로 인증된 화면으로 돌아가는 이력을 남기지 않는다.
+    void router.replace('/');
+
+    // 로그아웃 API는 best-effort다. 서버 지연·실패가 UI 전환을 막지 않는다.
+    void logoutRequest;
   }, [user, saveUser, router]);
 
   // 회원가입
