@@ -1,7 +1,6 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.config.MongoTestContainer;
-import com.ktb.chatapp.config.RedisTestContainer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 백엔드 저장소(Redis/MongoDB)가 변경되어도 테스트 코드 수정이 불필요
  */
 @SpringBootTest
-@Import({MongoTestContainer.class, RedisTestContainer.class})
+@Import(MongoTestContainer.class)
 @TestPropertySource(properties = {
     "socketio.enabled=false"
 })
@@ -168,19 +167,21 @@ class SessionServiceTest {
     }
 
     @Test
-    @DisplayName("최근 생성된 세션 검증은 불필요한 lastActivity 갱신을 생략한다")
-    void validateSession_RecentSessionKeepsLastActivity() {
+    @DisplayName("세션 검증 - lastActivity 업데이트")
+    void validateSession_UpdatesLastActivity() throws InterruptedException {
         // Given
         SessionMetadata metadata = createTestMetadata();
         SessionCreationResult created = sessionService.createSession(TEST_USER_ID, metadata);
         long initialLastActivity = created.getSessionData().getLastActivity();
+
+        Thread.sleep(100);
 
         // When
         SessionValidationResult result = sessionService.validateSession(TEST_USER_ID, created.getSessionId());
 
         // Then
         assertTrue(result.isValid());
-        assertThat(result.getSession().getLastActivity()).isEqualTo(initialLastActivity);
+        assertThat(result.getSession().getLastActivity()).isGreaterThan(initialLastActivity);
     }
 
     // ============ 세션 활동 업데이트 테스트 ============
