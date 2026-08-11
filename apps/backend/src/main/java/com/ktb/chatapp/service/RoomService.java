@@ -41,8 +41,8 @@ public class RoomService {
     }
 
     /**
-     * 페이지당 MongoDB 작업 수: 방 조회 1회, count 1회, 사용자 batch 1회, 메시지 집계 1회.
-     * 기존 방식은 전체 방 조회 후 각 방의 creator, participant, 최근 메시지를 다시 조회해 N+1이 발생했다.
+     * 페이지당 MongoDB 작업 수: 방 조회 1회, count 1회, 메시지 집계 1회.
+     * 목록은 참여자 수만 표시하므로 사용자 summary batch 조회를 수행하지 않는다.
      */
     public RoomsResponse getAllRooms(String name, int requestedLimit, String encodedCursor) {
         Timer.Sample sample = Timer.start(meterRegistry);
@@ -57,13 +57,12 @@ public class RoomService {
             boolean hasMore = fetchedRooms.size() > limit;
             List<Room> pageRooms = hasMore ? fetchedRooms.subList(0, limit) : fetchedRooms;
 
-            Map<String, User> usersById = findUsersByRoomIds(pageRooms);
             Map<String, Integer> recentMessageCounts = messageRepository.countRecentMessagesByRoomIds(
                     pageRooms.stream().map(Room::getId).collect(Collectors.toSet()),
                     LocalDateTime.now().minusMinutes(30));
 
-            List<RoomResponse> responses = pageRooms.stream()
-                    .map(room -> mapToRoomResponse(room, name, usersById,
+            List<RoomListResponse> responses = pageRooms.stream()
+                    .map(room -> RoomListResponse.from(room,
                             recentMessageCounts.getOrDefault(room.getId(), 0)))
                     .collect(Collectors.toList());
 
@@ -132,12 +131,12 @@ public class RoomService {
         }
 
         Room savedRoom = roomRepository.save(room);
-        // 문제: 저장 후 mapper가 creator/participant/count를 다시 조회했다.
-        // 권장 변경: 이미 보유한 creator와 초기 메시지 수 0으로 summary를 한 번만 조립한다.
+        // 생성/상세 API는 기존 RoomResponse 계약을 유지한다.
         RoomResponse response = mapToRoomResponse(savedRoom, name, Map.of(creator.getId(), creator), 0L)
                 .toBuilder().joined(true).build();
         try {
-            eventPublisher.publishEvent(new RoomCreatedEvent(this, response));
+            // 목록 Socket에는 참여자 전체 정보 대신 경량 payload만 보낸다.
+            eventPublisher.publishEvent(new RoomCreatedEvent(this, RoomListResponse.from(savedRoom, 0)));
         } catch (Exception e) {
             log.error("roomCreated 이벤트 발행 실패", e);
         }
@@ -162,7 +161,8 @@ public class RoomService {
             room = roomRepository.save(room);
         }
         try {
-            eventPublisher.publishEvent(new RoomUpdatedEvent(this, roomId, mapToRoomResponse(room, name)));
+            eventPublisher.publishEvent(new RoomUpdatedEvent(this, roomId,
+                    RoomListResponse.from(room, recentMessageCounter.countRecentMessages(room.getId()))));
         } catch (Exception e) {
             log.error("roomUpdate 이벤트 발행 실패", e);
         }

@@ -64,7 +64,7 @@ const RoomsTable = ({ rooms, connectionStatus, onJoinRoom, hasMore, isLoadingMor
               <Table.Cell>
                 <HStack $css={{ gap: '$050', alignItems: 'center' }}>
                   <GroupIcon />
-                  <Text typography="body2">{room.participants?.length || 0}</Text>
+                  <Text typography="body2">{room.participantsCount || 0}</Text>
                 </HStack>
               </Table.Cell>
               <Table.Cell>
