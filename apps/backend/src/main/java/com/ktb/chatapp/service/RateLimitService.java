@@ -38,8 +38,9 @@ public class RateLimitService {
         } catch (Exception e) {
             log.error("Rate limit check failed for client: {}", actualClientId, e);
             long resetEpochSeconds = nowEpochSeconds + windowSeconds;
-            return RateLimitCheckResult.allowed(
-                    maxRequests, maxRequests, windowSeconds, resetEpochSeconds, windowSeconds);
+            // 중요: Redis 장애 중 제한을 우회해 무제한 메시지가 전송되지 않도록 차단한다.
+            return RateLimitCheckResult.rejected(
+                    maxRequests, windowSeconds, resetEpochSeconds, windowSeconds);
         }
     }
     

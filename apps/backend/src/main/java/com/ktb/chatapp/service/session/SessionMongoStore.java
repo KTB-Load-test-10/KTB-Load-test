@@ -42,6 +42,13 @@ public class SessionMongoStore implements SessionStore {
     }
 
     @Override
+    public Session replace(Session session) {
+        // Redis 미사용 복구 경로에서도 단일 활성 세션이라는 계약을 유지한다.
+        sessionRepository.deleteByUserId(session.getUserId());
+        return sessionRepository.save(session);
+    }
+
+    @Override
     public Optional<Session> validateAndTouch(
             String userId, String sessionId, long activeAfter, long now, Instant expiresAt) {
         Query query = Query.query(Criteria.where("userId").is(userId)
