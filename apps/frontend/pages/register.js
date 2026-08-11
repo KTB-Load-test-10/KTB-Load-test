@@ -54,10 +54,6 @@ const Register = () => {
       
       setSuccess(true);
       setLoading(false);
-      
-      setTimeout(() => {
-        router.push('/login');
-      }, 1000);
     } catch (err) {
       setError(err.message || '회원가입 처리 중 오류가 발생했습니다.');
       setLoading(false);
