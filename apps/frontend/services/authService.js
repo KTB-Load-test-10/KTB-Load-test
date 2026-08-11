@@ -87,7 +87,9 @@ class AuthService {
     try {
       if (token) {
         await api.post('/api/auth/logout', null, {
-          headers: getAuthHeaders({ token, sessionId })
+          headers: getAuthHeaders({ token, sessionId }),
+          // UI는 이미 로그아웃되므로 장애 시 재시도로 요청을 누적하지 않는다.
+          skipRetry: true,
         });
       }
     } catch (error) {

@@ -10,4 +10,5 @@ import java.util.Optional;
 public interface SessionRepository extends MongoRepository<Session, String> {
     Optional<Session> findByUserId(String userId);
     void deleteByUserId(String userId);
+    long deleteByUserIdAndSessionId(String userId, String sessionId);
 }

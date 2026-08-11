@@ -70,6 +70,25 @@ describe('api client', () => {
     expect(readHeader(response.config.headers, 'x-session-id')).toBeUndefined();
   });
 
+  it('does not retry requests marked as skipRetry', async () => {
+    const client = createApiClient({ baseURL: 'http://api.test', getSession: () => null });
+    let attempts = 0;
+
+    client.defaults.adapter = async (config) => {
+      attempts += 1;
+      const error = new Error('Network error');
+      error.config = config;
+      error.request = {};
+      error.code = 'ERR_NETWORK';
+      throw error;
+    };
+
+    await expect(client.post('/api/auth/logout', {}, { skipRetry: true })).rejects.toMatchObject({
+      code: 'ERR_NETWORK',
+    });
+    expect(attempts).toBe(1);
+  });
+
   it('clears stored users on auth expiration', async () => {
     localStorage.setItem(
       USER_STORAGE_KEY,

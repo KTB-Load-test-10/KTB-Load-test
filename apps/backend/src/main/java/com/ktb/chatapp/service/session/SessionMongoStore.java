@@ -2,6 +2,9 @@ package com.ktb.chatapp.service.session;
 
 import com.ktb.chatapp.model.Session;
 import com.ktb.chatapp.repository.SessionRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -15,6 +18,7 @@ import org.springframework.stereotype.Component;
 public class SessionMongoStore implements SessionStore {
     
     private final SessionRepository sessionRepository;
+    private final MeterRegistry meterRegistry;
     
     @Override
     public Optional<Session> findByUserId(String userId) {
@@ -28,9 +32,20 @@ public class SessionMongoStore implements SessionStore {
     
     @Override
     public void delete(String userId, String sessionId) {
-        Session session = sessionRepository.findByUserId(userId).orElse(null);
-        if (session != null && sessionId.equals(session.getSessionId())) {
-            sessionRepository.delete(session);
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String outcome = "error";
+        try {
+            // 중요: 조회 후 삭제 대신 두 식별자를 조건으로 한 단일 MongoDB 삭제를 수행한다.
+            long deletedCount = sessionRepository.deleteByUserIdAndSessionId(userId, sessionId);
+            outcome = deletedCount > 0 ? "deleted" : "not_found";
+        } finally {
+            sample.stop(Timer.builder("chat.auth.logout.session_delete.duration")
+                    .tag("outcome", outcome)
+                    .register(meterRegistry));
+            Counter.builder("chat.auth.logout.session_delete.count")
+                    .tag("outcome", outcome)
+                    .register(meterRegistry)
+                    .increment();
         }
     }
     
