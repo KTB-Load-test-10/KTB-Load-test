@@ -9,8 +9,12 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
  * @param waitForRedirect
  */
 async function loginAction(page, credentials, waitForRedirect = true) {
-  await page.goto(`${BASE_URL}/login`);
-  await page.getByTestId('login-email-input').fill(credentials.email);
+  const loginEmailInput = page.getByTestId('login-email-input');
+  if (!page.url().startsWith(`${BASE_URL}/login`)) {
+    await page.goto(`${BASE_URL}/login`);
+  }
+  await expect(loginEmailInput).toBeVisible({ timeout: 10000 });
+  await loginEmailInput.fill(credentials.email);
   await page.getByTestId('login-password-input').fill(credentials.password);
   await page.getByTestId('login-submit-button').click();
   await page.waitForTimeout(1000); // 잠시 대기
@@ -31,12 +35,17 @@ async function registerAction(page, userData) {
   await page.getByTestId('register-password-confirm-input').fill(userData.passwordConfirm);
   await page.getByTestId('register-name-input').fill(userData.name);
   await page.getByTestId('register-submit-button').click();
-  // 성공 시 앱이 1000ms 뒤 router.push('/login')로 이동하므로, 그 내비게이션이 끝난 뒤에
-  // 다음 goto가 실행되어야 경합(net::ERR_ABORTED)이 없다. 실패 시엔 에러 메시지 표시까지 대기.
-  await Promise.race([
-    page.waitForURL(`${BASE_URL}/login`, { timeout: 10000 }).catch(() => {}),
-    page.getByTestId('register-error-message').waitFor({ state: 'visible', timeout: 10000 }).catch(() => {}),
+  // 중요: 성공 라우팅뿐 아니라 로그인 폼 렌더링까지 기다려 다음 로그인 동작과 경합하지 않는다.
+  const result = await Promise.race([
+    page.waitForURL(`${BASE_URL}/login`, { timeout: 10000 }).then(() => 'login'),
+    page.getByTestId('register-error-message')
+      .waitFor({ state: 'visible', timeout: 10000 })
+      .then(() => 'error'),
   ]);
+  if (result === 'error') {
+    throw new Error('회원가입에 실패했습니다.');
+  }
+  await expect(page.getByTestId('login-email-input')).toBeVisible({ timeout: 10000 });
 }
 
 /**
