@@ -235,7 +235,7 @@ class MessageLoaderIntegrationTest {
     }
 
     @Test
-    @DisplayName("메시지 초기 조회가 room_timestamp_idx를 사용하고 별도 SORT를 수행하지 않는다")
+    @DisplayName("메시지 초기 조회가 room_timestamp_id_desc를 사용하고 별도 SORT를 수행하지 않는다")
     void messageHistoryQuery_shouldUseRoomTimestampIndex() {
         IntStream.range(0, 100)
                 .forEach(this::createAndSaveMessage);
@@ -245,15 +245,17 @@ class MessageLoaderIntegrationTest {
                 .into(new ArrayList<>());
 
         assertThat(indexes).anySatisfy(index -> {
-            assertThat(index.getString("name")).isEqualTo("room_timestamp_idx");
+            assertThat(index.getString("name")).isEqualTo("room_timestamp_id_desc");
             assertThat(index.get("key", Document.class))
-                    .isEqualTo(new Document("room", 1).append("timestamp", -1));
+                    .isEqualTo(new Document("room", 1)
+                            .append("timestamp", -1)
+                            .append("_id", -1));
         });
 
         Document findCommand = new Document("find", "messages")
                 .append("filter", new Document("room", roomId)
                         .append("timestamp", new Document("$lt", new Date())))
-                .append("sort", new Document("timestamp", -1))
+                .append("sort", new Document("timestamp", -1).append("_id", -1))
                 .append("limit", 30);
         Document explain = mongoTemplate.executeCommand(
                 new Document("explain", findCommand)
@@ -262,7 +264,7 @@ class MessageLoaderIntegrationTest {
         Document queryPlanner = explain.get("queryPlanner", Document.class);
         Document executionStats = explain.get("executionStats", Document.class);
 
-        assertThat(queryPlanner.toJson()).contains("IXSCAN", "room_timestamp_idx");
+        assertThat(queryPlanner.toJson()).contains("IXSCAN", "room_timestamp_id_desc");
         assertThat(queryPlanner.toJson()).doesNotContain("\"stage\": \"SORT\"");
         assertThat(executionStats.getInteger("nReturned")).isEqualTo(30);
         assertThat(((Number) executionStats.get("totalKeysExamined")).longValue())

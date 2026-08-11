@@ -23,16 +23,23 @@ export const deriveUniqueSortedMessages = (
     return true;
   });
 
-  const compareTimestamp = (a, b) =>
-    new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
-  newMessages.sort(compareTimestamp);
+  const compareMessageOrder = (a, b) => {
+    const timestampDifference =
+      new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
+    if (timestampDifference !== 0) {
+      return timestampDifference;
+    }
+
+    return String(a._id || '').localeCompare(String(b._id || ''));
+  };
+  newMessages.sort(compareMessageOrder);
 
   // 중요: currentMessages는 이미 정렬됐다는 불변식을 이용해 O(n log n) 재정렬을 피한다.
   const merged = [];
   let currentIndex = 0;
   let incomingIndex = 0;
   while (currentIndex < currentMessages.length && incomingIndex < newMessages.length) {
-    if (compareTimestamp(currentMessages[currentIndex], newMessages[incomingIndex]) <= 0) {
+    if (compareMessageOrder(currentMessages[currentIndex], newMessages[incomingIndex]) <= 0) {
       merged.push(currentMessages[currentIndex++]);
     } else {
       merged.push(newMessages[incomingIndex++]);
