@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.mongodb.core.MongoTemplate;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("SessionMongoStore 로그아웃 세션 삭제")
@@ -24,13 +25,16 @@ class SessionMongoStoreTest {
     @Mock
     private SessionRepository sessionRepository;
 
+    @Mock
+    private MongoTemplate mongoTemplate;
+
     private SimpleMeterRegistry meterRegistry;
     private SessionMongoStore sessionStore;
 
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        sessionStore = new SessionMongoStore(sessionRepository, meterRegistry);
+        sessionStore = new SessionMongoStore(sessionRepository, mongoTemplate, meterRegistry);
     }
 
     @Test

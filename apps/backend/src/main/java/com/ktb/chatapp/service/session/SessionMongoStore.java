@@ -25,6 +25,8 @@ public class SessionMongoStore implements SessionStore {
     
     private final SessionRepository sessionRepository;
 
+    // 중요: validateAndTouch가 세션 검증과 활동 시각 갱신을 한 번의 MongoDB 연산으로 수행한다.
+    private final MongoTemplate mongoTemplate;
 
     private final MeterRegistry meterRegistry;
 

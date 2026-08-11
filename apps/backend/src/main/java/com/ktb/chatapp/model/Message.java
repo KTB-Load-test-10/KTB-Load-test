@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
@@ -27,7 +28,7 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "messages")
-@CompoundIndex(name = "room_timestamp_id_desc", def = "{ 'room': 1, 'timestamp': -1, '_id': -1 }")
+@CompoundIndex(name = "room_timestamp_idx", def = "{'room': 1, 'timestamp': -1}")
 public class Message {
 
     @Id
