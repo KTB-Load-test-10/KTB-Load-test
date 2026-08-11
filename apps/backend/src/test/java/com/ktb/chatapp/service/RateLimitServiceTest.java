@@ -1,7 +1,9 @@
 package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.config.MongoTestContainer;
+import com.ktb.chatapp.config.RedisTestContainer;
 import com.ktb.chatapp.repository.RateLimitRepository;
+import com.ktb.chatapp.service.ratelimit.RateLimitStore;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,12 +12,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@Import(MongoTestContainer.class)
+@Import({MongoTestContainer.class, RedisTestContainer.class})
 @TestPropertySource(properties = {
         "socketio.enabled=false"
 })
@@ -28,9 +31,16 @@ class RateLimitServiceTest {
     @Autowired
     private RateLimitService rateLimitService;
 
+    @Autowired
+    private RateLimitStore rateLimitStore;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
     @BeforeEach
     void setUp() {
         rateLimitRepository.deleteAll();
+        redisTemplate.keys("chat:rate-limit:*").forEach(redisTemplate::delete);
     }
 
     @Test
@@ -130,5 +140,16 @@ class RateLimitServiceTest {
                 rateLimitService.checkRateLimit(clientId2, maxRequests, window);
         assertThat(result2.allowed()).isTrue();
         assertThat(result2.remaining()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("서로 다른 서비스 인스턴스도 같은 Redis 카운터를 공유한다")
+    void checkRateLimit_SharesCounterAcrossServiceInstances() {
+        RateLimitService secondInstance = new RateLimitService(rateLimitStore);
+        Duration window = Duration.ofSeconds(60);
+
+        assertThat(rateLimitService.checkRateLimit("shared-client", 2, window).allowed()).isTrue();
+        assertThat(secondInstance.checkRateLimit("shared-client", 2, window).allowed()).isTrue();
+        assertThat(rateLimitService.checkRateLimit("shared-client", 2, window).allowed()).isFalse();
     }
 }
