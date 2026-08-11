@@ -274,6 +274,25 @@ describe('useRoomHandling', () => {
     expect(harness.setupCompleteRef.current).toBe(true);
   });
 
+  it('retries a delayed Socket room join before failing room setup', async () => {
+    socketClient.joinRoomAndWait
+      .mockRejectedValueOnce(new Error('채팅방 입장 시간이 초과되었습니다.'))
+      .mockResolvedValueOnce({
+        roomId: 'room-1',
+        messages: [],
+        hasMore: false,
+      });
+    const harness = createHarness();
+
+    await act(async () => {
+      await harness.result.current.setupRoom();
+    });
+
+    expect(socketClient.joinRoomAndWait).toHaveBeenCalledTimes(2);
+    expect(harness.actions.setupSucceeded).toHaveBeenCalledTimes(1);
+    expect(harness.actions.setupFailed).not.toHaveBeenCalled();
+  });
+
   it('falls back to fetching previous messages when join response has no messages', async () => {
     socketClient.joinRoomAndWait.mockResolvedValueOnce({ roomId: 'room-1' });
     const harness = createHarness();
