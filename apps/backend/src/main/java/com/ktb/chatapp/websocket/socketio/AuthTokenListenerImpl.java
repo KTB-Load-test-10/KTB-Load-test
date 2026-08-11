@@ -4,6 +4,7 @@ import com.corundumstudio.socketio.AuthTokenListener;
 import com.corundumstudio.socketio.AuthTokenResult;
 import com.corundumstudio.socketio.SocketIOClient;
 import com.ktb.chatapp.model.User;
+import com.ktb.chatapp.dto.UserResponse;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.JwtService;
 import com.ktb.chatapp.service.SessionService;
@@ -69,10 +70,12 @@ public class AuthTokenListenerImpl implements AuthTokenListener {
             }
 
             log.info("Socket.IO connection authorized for user: {} ({})", user.getName(), userId);
-
-            // 메시지 hot path에서 같은 사용자를 다시 조회하지 않도록 연결 수명 동안만 보관한다.
-            client.set("userDetails", user);
-            var socketUser = new SocketUser(user.getId(), user.getName(), sessionId, client.getSessionId().toString());
+            var socketUser = new SocketUser(
+                    user.getId(),
+                    user.getName(),
+                    sessionId,
+                    client.getSessionId().toString(),
+                    UserResponse.from(user));
             socketIOChatHandlerProvider.getObject().onConnect(client, socketUser);
             return AuthTokenResult.AuthTokenResultSuccess;
         } catch (Exception e) {
