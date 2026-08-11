@@ -12,9 +12,12 @@ import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.stream.IntStream;
 import net.datafaker.Faker;
+import org.bson.Document;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
@@ -47,6 +51,9 @@ class MessageLoaderIntegrationTest {
     @Autowired
     private FileRepository fileRepository;
 
+    @Autowired
+    private MongoTemplate mongoTemplate;
+
     @MockitoSpyBean
     private MessageReadStatusService messageReadStatusService;
 
@@ -67,7 +74,8 @@ class MessageLoaderIntegrationTest {
         messageLoader = new MessageLoader(
                 messageRepository,
                 userRepository,
-                new MessageResponseMapper(fileRepository),
+                fileRepository,
+                new MessageResponseMapper(),
                 messageReadStatusService
         );
 
@@ -179,6 +187,87 @@ class MessageLoaderIntegrationTest {
         // Then: 빈 결과 반환
         assertThat(response.getMessages()).isEmpty();
         assertThat(response.isHasMore()).isFalse();
+    }
+
+    @Test
+    @DisplayName("초기 메시지는 limit + 1개의 find만 실행하고 count 쿼리를 실행하지 않는다")
+    void loadMessages_shouldUseLimitPlusOneWithoutCountQuery() {
+        IntStream.range(0, 31)
+                .forEach(this::createAndSaveMessage);
+
+        mongoTemplate.executeCommand(new Document("profile", 0));
+        if (mongoTemplate.collectionExists("system.profile")) {
+            mongoTemplate.getCollection("system.profile").drop();
+        }
+
+        FetchMessagesResponse response;
+        mongoTemplate.executeCommand(new Document("profile", 2));
+        try {
+            response = messageLoader.loadMessages(
+                    new FetchMessagesRequest(roomId, 30, null), userId);
+        } finally {
+            mongoTemplate.executeCommand(new Document("profile", 0));
+        }
+
+        List<Document> historyOperations = mongoTemplate.getCollection("system.profile")
+                .find()
+                .into(new ArrayList<>())
+                .stream()
+                .filter(operation -> {
+                    Document command = operation.get("command", Document.class);
+                    return command != null
+                            && command.toJson().contains(roomId)
+                            && ("messages".equals(command.getString("find"))
+                                    || "messages".equals(command.getString("count"))
+                                    || "messages".equals(command.getString("aggregate")));
+                })
+                .toList();
+
+        assertThat(response.getMessages()).hasSize(30);
+        assertThat(response.isHasMore()).isTrue();
+        assertThat(historyOperations).singleElement().satisfies(operation -> {
+            Document command = operation.get("command", Document.class);
+            assertThat(command.getString("find")).isEqualTo("messages");
+            assertThat(((Number) command.get("limit")).intValue()).isEqualTo(31);
+            assertThat(command).doesNotContainKeys("count", "aggregate");
+        });
+    }
+
+    @Test
+    @DisplayName("메시지 초기 조회가 room_timestamp_idx를 사용하고 별도 SORT를 수행하지 않는다")
+    void messageHistoryQuery_shouldUseRoomTimestampIndex() {
+        IntStream.range(0, 100)
+                .forEach(this::createAndSaveMessage);
+
+        List<Document> indexes = mongoTemplate.getCollection("messages")
+                .listIndexes()
+                .into(new ArrayList<>());
+
+        assertThat(indexes).anySatisfy(index -> {
+            assertThat(index.getString("name")).isEqualTo("room_timestamp_idx");
+            assertThat(index.get("key", Document.class))
+                    .isEqualTo(new Document("room", 1).append("timestamp", -1));
+        });
+
+        Document findCommand = new Document("find", "messages")
+                .append("filter", new Document("room", roomId)
+                        .append("timestamp", new Document("$lt", new Date())))
+                .append("sort", new Document("timestamp", -1))
+                .append("limit", 30);
+        Document explain = mongoTemplate.executeCommand(
+                new Document("explain", findCommand)
+                        .append("verbosity", "executionStats"));
+
+        Document queryPlanner = explain.get("queryPlanner", Document.class);
+        Document executionStats = explain.get("executionStats", Document.class);
+
+        assertThat(queryPlanner.toJson()).contains("IXSCAN", "room_timestamp_idx");
+        assertThat(queryPlanner.toJson()).doesNotContain("\"stage\": \"SORT\"");
+        assertThat(executionStats.getInteger("nReturned")).isEqualTo(30);
+        assertThat(((Number) executionStats.get("totalKeysExamined")).longValue())
+                .isLessThanOrEqualTo(30L);
+        assertThat(((Number) executionStats.get("totalDocsExamined")).longValue())
+                .isLessThanOrEqualTo(30L);
     }
 
     /**
