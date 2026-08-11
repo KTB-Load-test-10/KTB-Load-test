@@ -12,7 +12,6 @@ import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.FileRepository;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
-import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.RateLimitCheckResult;
 import com.ktb.chatapp.service.RateLimitService;
 import com.ktb.chatapp.service.RoomActivityNotifier;
@@ -46,7 +45,6 @@ class ChatMessageHandlerTest {
     @Mock private SocketIOServer socketIOServer;
     @Mock private MessageRepository messageRepository;
     @Mock private RoomRepository roomRepository;
-    @Mock private UserRepository userRepository;
     @Mock private FileRepository fileRepository;
     @Mock private AiService aiService;
     @Mock private SessionService sessionService;
@@ -64,7 +62,6 @@ class ChatMessageHandlerTest {
                         socketIOServer,
                         messageRepository,
                         roomRepository,
-                        userRepository,
                         fileRepository,
                         aiService,
                         sessionService,
@@ -87,10 +84,6 @@ class ChatMessageHandlerTest {
         RateLimitCheckResult allowedResult = RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60);
         when(rateLimitService.checkRateLimit(eq(socketUser.id()), anyInt(), any()))
                 .thenReturn(allowedResult);
-
-        User user = new User();
-        user.setId("user-1");
-        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
 
         Room room = new Room();
         room.setId("room-1");
@@ -127,11 +120,6 @@ class ChatMessageHandlerTest {
                 .thenReturn(SessionValidationResult.valid(null));
         when(rateLimitService.checkRateLimit(eq(socketUser.id()), anyInt(), any()))
                 .thenReturn(RateLimitCheckResult.allowed(10000, 9999, 60, System.currentTimeMillis() / 1000 + 60, 60));
-
-        User user = new User();
-        user.setId("user-1");
-        user.setName("Tester");
-        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
 
         Room room = new Room();
         room.setId("room-1");
