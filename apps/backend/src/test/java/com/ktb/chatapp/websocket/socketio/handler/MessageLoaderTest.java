@@ -2,6 +2,7 @@ package com.ktb.chatapp.websocket.socketio.handler;
 
 import com.ktb.chatapp.dto.FetchMessagesRequest;
 import com.ktb.chatapp.dto.FetchMessagesResponse;
+import com.ktb.chatapp.model.File;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.FileRepository;
@@ -9,19 +10,19 @@ import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import net.datafaker.Faker;
-import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.*;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,7 +61,8 @@ class MessageLoaderTest {
         messageLoader = new MessageLoader(
                 messageRepository,
                 userRepository,
-                new MessageResponseMapper(fileRepository),
+                fileRepository,
+                new MessageResponseMapper(),
                 messageReadStatusService
         );
         
@@ -98,15 +100,15 @@ class MessageLoaderTest {
     @DisplayName("loadMessages: 내림차순 조회 후 오름차순 재정렬")
     void loadMessages_shouldReturnAscendingOrderAfterReversing() {
         // Given: testMessages[0~29] (50시간 전 ~ 21시간 전) - 오름차순 상태
-        List<Message> first30Messages = testMessages.subList(0, 30);
+        List<Message> first31Messages = testMessages.subList(0, 31);
         
         // DB는 DESC 정렬로 반환한다고 가정 (최신 것 먼저)
         // [21시간 전, 22시간 전, ..., 50시간 전]
-        var messagePage = getMessagePage(first30Messages);
+        var fetchedMessages = descending(first31Messages);
         
         when(messageRepository.findByRoomIdAndTimestampBefore(
                 eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
-                .thenReturn(messagePage);
+                .thenReturn(fetchedMessages);
         
         // When: 메시지 로드
         FetchMessagesRequest req = new FetchMessagesRequest(roomId, 30, null);
@@ -120,13 +122,40 @@ class MessageLoaderTest {
         // [50시간 전, 49시간 전, ..., 21시간 전]
         verifyAscending(result);
     }
+
+    @Test
+    @DisplayName("요청 개수보다 하나 더 조회하여 hasMore를 계산하고 초과 메시지는 처리하지 않는다")
+    void loadMessages_shouldUseLimitPlusOneWithoutProcessingOverflowMessage() {
+        List<Message> fetchedMessages = descending(testMessages.subList(0, 31));
+        Message overflowMessage = fetchedMessages.get(30);
+
+        when(messageRepository.findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(fetchedMessages);
+
+        FetchMessagesResponse result = messageLoader.loadMessages(
+                new FetchMessagesRequest(roomId, 30, null), userId);
+
+        assertThat(result.getMessages()).hasSize(30);
+        assertThat(result.isHasMore()).isTrue();
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(messageRepository).findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), pageableCaptor.capture());
+        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(31);
+        assertThat(pageableCaptor.getValue().getSort().getOrderFor("timestamp").isDescending())
+                .isTrue();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> readIdsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(messageReadStatusService).updateReadStatus(readIdsCaptor.capture(), eq(userId));
+        assertThat(readIdsCaptor.getValue())
+                .hasSize(30)
+                .doesNotContain(overflowMessage.getId());
+    }
     
-    private static @NotNull Page<Message> getMessagePage(List<Message> first30Messages) {
-        List<Message> messages = new ArrayList<>(first30Messages.reversed());
-        
-        Pageable pageable = PageRequest.of(0, 30, Sort.by("timestamp").descending());
-        Page<Message> messagePage = new PageImpl<>(messages, pageable, 50);
-        return messagePage;
+    private static List<Message> descending(List<Message> messagesInAscendingOrder) {
+        return List.copyOf(messagesInAscendingOrder.reversed());
     }
     
     @Test
@@ -137,11 +166,11 @@ class MessageLoaderTest {
         
         // DB는 DESC 정렬로 반환 (최신 것부터)
         // [1시간 전, 2시간 전, ..., 30시간 전]
-        Page<Message> messagePage = getMessagePage(last30Messages);
+        List<Message> fetchedMessages = descending(last30Messages);
         
         when(messageRepository.findByRoomIdAndTimestampBefore(
                 eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
-                .thenReturn(messagePage);
+                .thenReturn(fetchedMessages);
         
         // When: 초기 메시지 로드
         FetchMessagesRequest req = new FetchMessagesRequest(roomId, 30, null);
@@ -149,6 +178,7 @@ class MessageLoaderTest {
         
         // Then: 결과는 오름차순으로 정렬되어야 함
         assertThat(result.getMessages()).hasSize(30);
+        assertThat(result.isHasMore()).isFalse();
         
         // 시간순 정렬 확인 (오름차순: 오래된 것 → 최신 것)
         // [30시간 전, 29시간 전, ..., 1시간 전]
@@ -175,5 +205,101 @@ class MessageLoaderTest {
         
         assertThat(result.getMessages()).isEmpty();
         assertThat(result.isHasMore()).isFalse();
+    }
+
+    @Test
+    @DisplayName("sender와 file을 중복 제거하여 각각 한 번에 조회한다")
+    void loadMessages_shouldBatchLoadDistinctSendersAndFiles() {
+        User firstUser = User.builder()
+                .id("user-1")
+                .name("첫 번째 사용자")
+                .email("user1@example.com")
+                .build();
+        User secondUser = User.builder()
+                .id("user-2")
+                .name("두 번째 사용자")
+                .email("user2@example.com")
+                .build();
+        File firstFile = createFile("file-1", "first.png");
+        File secondFile = createFile("file-2", "second.pdf");
+
+        Message oldest = createMessage("message-1", LocalDateTime.now().minusMinutes(3));
+        oldest.setSenderId(firstUser.getId());
+        oldest.setFileId(firstFile.getId());
+        Message middle = createMessage("message-2", LocalDateTime.now().minusMinutes(2));
+        middle.setSenderId(firstUser.getId());
+        middle.setFileId(firstFile.getId());
+        Message newest = createMessage("message-3", LocalDateTime.now().minusMinutes(1));
+        newest.setSenderId(secondUser.getId());
+        newest.setFileId(secondFile.getId());
+
+        when(messageRepository.findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(List.of(newest, middle, oldest));
+        when(userRepository.findAllById(Set.of("user-1", "user-2")))
+                .thenReturn(List.of(firstUser, secondUser));
+        when(fileRepository.findAllById(Set.of("file-1", "file-2")))
+                .thenReturn(List.of(firstFile, secondFile));
+
+        FetchMessagesResponse result = messageLoader.loadMessages(
+                new FetchMessagesRequest(roomId, 30, null), userId);
+
+        assertThat(result.getMessages()).extracting(message -> message.getSender().getId())
+                .containsExactly("user-1", "user-1", "user-2");
+        assertThat(result.getMessages()).extracting(message -> message.getFile().getId())
+                .containsExactly("file-1", "file-1", "file-2");
+        verify(userRepository, times(1)).findAllById(Set.of("user-1", "user-2"));
+        verify(fileRepository, times(1)).findAllById(Set.of("file-1", "file-2"));
+        verify(userRepository, never()).findById(anyString());
+        verify(fileRepository, never()).findById(anyString());
+    }
+
+    @Test
+    @DisplayName("삭제된 sender와 file 참조는 응답에서 생략한다")
+    void loadMessages_shouldIgnoreMissingSenderAndFileReferences() {
+        Message message = createMessage("message-1", LocalDateTime.now().minusMinutes(1));
+        message.setSenderId("deleted-user");
+        message.setFileId("deleted-file");
+
+        when(messageRepository.findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(List.of(message));
+        when(userRepository.findAllById(Set.of("deleted-user"))).thenReturn(List.of());
+        when(fileRepository.findAllById(Set.of("deleted-file"))).thenReturn(List.of());
+
+        FetchMessagesResponse result = messageLoader.loadMessages(
+                new FetchMessagesRequest(roomId, 30, null), userId);
+
+        assertThat(result.getMessages()).singleElement().satisfies(response -> {
+            assertThat(response.getSender()).isNull();
+            assertThat(response.getFile()).isNull();
+        });
+        verify(userRepository).findAllById(Set.of("deleted-user"));
+        verify(fileRepository).findAllById(Set.of("deleted-file"));
+    }
+
+    @Test
+    @DisplayName("메시지가 없으면 sender와 file 저장소를 조회하지 않는다")
+    void loadMessages_shouldSkipBatchQueriesForEmptyMessages() {
+        when(messageRepository.findByRoomIdAndTimestampBefore(
+                eq(roomId), any(LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(List.of());
+
+        FetchMessagesResponse result = messageLoader.loadMessages(
+                new FetchMessagesRequest(roomId, 30, null), userId);
+
+        assertThat(result.getMessages()).isEmpty();
+        verify(userRepository, never()).findAllById(any());
+        verify(fileRepository, never()).findAllById(any());
+    }
+
+    private static File createFile(String id, String filename) {
+        return File.builder()
+                .id(id)
+                .filename(filename)
+                .originalname(filename)
+                .mimetype("application/octet-stream")
+                .size(1024)
+                .build();
     }
 }
