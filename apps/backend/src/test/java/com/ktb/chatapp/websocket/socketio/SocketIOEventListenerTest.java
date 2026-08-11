@@ -2,7 +2,7 @@ package com.ktb.chatapp.websocket.socketio;
 
 import com.corundumstudio.socketio.BroadcastOperations;
 import com.corundumstudio.socketio.SocketIOServer;
-import com.ktb.chatapp.dto.RoomResponse;
+import com.ktb.chatapp.dto.RoomListResponse;
 import com.ktb.chatapp.event.RoomActivityEvent;
 import com.ktb.chatapp.event.RoomUpdatedEvent;
 import com.ktb.chatapp.event.SessionEndedEvent;
@@ -70,9 +70,10 @@ class SocketIOEventListenerTest {
 
     @Test
     void handleRoomUpdatedEvent_sendsRoomUpdatedToRoomList() {
-        RoomResponse roomResponse = RoomResponse.builder()
+        RoomListResponse roomResponse = RoomListResponse.builder()
                 .id("room-1")
                 .name("Updated room")
+                .participantsCount(2)
                 .build();
         RoomUpdatedEvent event = new RoomUpdatedEvent(this, "room-1", roomResponse);
         when(socketIOServer.getRoomOperations("room-list")).thenReturn(roomListOperations);
