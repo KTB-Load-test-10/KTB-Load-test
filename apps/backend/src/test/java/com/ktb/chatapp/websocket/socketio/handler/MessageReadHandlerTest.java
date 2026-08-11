@@ -7,10 +7,8 @@ import com.ktb.chatapp.dto.MarkAsReadRequest;
 import com.ktb.chatapp.dto.MessagesReadResponse;
 import com.ktb.chatapp.model.Message;
 import com.ktb.chatapp.model.Room;
-import com.ktb.chatapp.model.User;
 import com.ktb.chatapp.repository.MessageRepository;
 import com.ktb.chatapp.repository.RoomRepository;
-import com.ktb.chatapp.repository.UserRepository;
 import com.ktb.chatapp.service.MessageReadStatusService;
 import com.ktb.chatapp.websocket.socketio.SocketUser;
 import java.util.List;
@@ -39,7 +37,6 @@ class MessageReadHandlerTest {
     @Mock private MessageReadStatusService messageReadStatusService;
     @Mock private MessageRepository messageRepository;
     @Mock private RoomRepository roomRepository;
-    @Mock private UserRepository userRepository;
     @Mock private SocketIOClient client;
     @Mock private BroadcastOperations roomOperations;
 
@@ -51,8 +48,7 @@ class MessageReadHandlerTest {
                 socketIOServer,
                 messageReadStatusService,
                 messageRepository,
-                roomRepository,
-                userRepository);
+                roomRepository);
     }
 
     @Test
@@ -63,7 +59,7 @@ class MessageReadHandlerTest {
         handler.handleMarkAsRead(client, request);
 
         verify(client).sendEvent(eq(ERROR), any());
-        verify(messageReadStatusService, never()).updateReadStatus(any(), any());
+        verify(messageReadStatusService, never()).updateReadStatus(any(), any(), any());
     }
 
     @Test
@@ -71,23 +67,37 @@ class MessageReadHandlerTest {
         MarkAsReadRequest request = request("message-1");
         Message message = Message.builder().id("message-1").roomId("room-1").build();
         Room room = Room.builder().id("room-1").participantIds(Set.of("user-1")).build();
-        User user = User.builder().id("user-1").name("tester").email("tester@example.com").build();
 
         when(client.get("user"))
                 .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
-        when(messageRepository.findById("message-1")).thenReturn(Optional.of(message));
-        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+        when(messageRepository.findAllById(List.of("message-1"))).thenReturn(List.of(message));
         when(roomRepository.findById("room-1")).thenReturn(Optional.of(room));
         when(socketIOServer.getRoomOperations("room-1")).thenReturn(roomOperations);
 
         handler.handleMarkAsRead(client, request);
 
-        verify(messageReadStatusService).updateReadStatus(List.of("message-1"), "user-1");
+        verify(messageReadStatusService).updateReadStatus("room-1", List.of("message-1"), "user-1");
         ArgumentCaptor<Object> responseCaptor = ArgumentCaptor.forClass(Object.class);
         verify(roomOperations).sendEvent(eq(MESSAGES_READ), responseCaptor.capture());
         MessagesReadResponse response = (MessagesReadResponse) responseCaptor.getValue();
         assertEquals("user-1", response.getUserId());
         assertEquals(List.of("message-1"), response.getMessageIds());
+    }
+
+    @Test
+    void handleMarkAsRead_rejectsMessageIdsFromDifferentRooms() {
+        MarkAsReadRequest request = new MarkAsReadRequest();
+        request.setMessageIds(List.of("message-1", "message-2"));
+        when(client.get("user"))
+                .thenReturn(new SocketUser("user-1", "tester", "session-1", "socket-1"));
+        when(messageRepository.findAllById(request.getMessageIds())).thenReturn(List.of(
+                Message.builder().id("message-1").roomId("room-1").build(),
+                Message.builder().id("message-2").roomId("room-2").build()));
+
+        handler.handleMarkAsRead(client, request);
+
+        verify(client).sendEvent(eq(ERROR), any());
+        verify(messageReadStatusService, never()).updateReadStatus(any(), any(), any());
     }
 
     private MarkAsReadRequest request(String messageId) {

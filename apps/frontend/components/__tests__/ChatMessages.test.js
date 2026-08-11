@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatMessages from '../ChatMessages';
 
 vi.mock('../../hooks/useInfiniteScroll', () => ({
@@ -9,10 +9,18 @@ vi.mock('../../hooks/useInfiniteScroll', () => ({
 
 vi.mock('../../hooks/useAutoScroll', () => ({
   useAutoScroll: () => ({
-    containerRef: { current: null },
+    containerRef: React.createRef(),
     scrollToBottom: vi.fn(),
     isNearBottom: true,
   }),
+}));
+
+const { markMessagesAsRead } = vi.hoisted(() => ({ markMessagesAsRead: vi.fn() }));
+vi.mock('@/lib/socket/socketClient', () => ({
+  default: {
+    canSend: () => true,
+    markMessagesAsRead,
+  },
 }));
 
 vi.mock('../SystemMessage', () => ({
@@ -28,18 +36,43 @@ vi.mock('../UserMessage', () => ({
 }));
 
 describe('ChatMessages', () => {
-  it('renders messages sorted by timestamp without mutating the input array', () => {
+  let observers;
+
+  beforeEach(() => {
+    observers = [];
+    globalThis.IntersectionObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.nodes = [];
+        observers.push(this);
+      }
+      observe(node) { this.nodes.push(node); }
+      unobserve() {}
+      disconnect() {}
+      triggerVisible() {
+        this.callback(this.nodes.map(target => ({ target, isIntersecting: true })));
+      }
+    };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    markMessagesAsRead.mockClear();
+    delete globalThis.IntersectionObserver;
+  });
+
+  it('renders the already-sorted state without mutating the input array', () => {
     const messages = [
-      {
-        _id: 'late',
-        content: 'late message',
-        timestamp: '2026-06-20T12:00:00.000Z',
-        sender: { _id: 'other' },
-      },
       {
         _id: 'early',
         content: 'early message',
         timestamp: '2026-06-20T11:00:00.000Z',
+        sender: { _id: 'other' },
+      },
+      {
+        _id: 'late',
+        content: 'late message',
+        timestamp: '2026-06-20T12:00:00.000Z',
         sender: { _id: 'other' },
       },
     ];
@@ -58,6 +91,28 @@ describe('ChatMessages', () => {
       'late message',
     ]);
     expect(messages.map((message) => message._id)).toEqual(originalOrder);
+  });
+
+  it('batches visible unread messages into one socket event', () => {
+    vi.useFakeTimers();
+    render(
+      React.createElement(ChatMessages, {
+        messages: [
+          { _id: 'message-1', content: 'one', timestamp: 1, sender: { _id: 'other' }, readers: [] },
+          { _id: 'message-2', content: 'two', timestamp: 2, sender: { _id: 'other' }, readers: [] },
+        ],
+        currentUser: { id: 'me' },
+        hasMoreMessages: false,
+      })
+    );
+
+    observers.at(-1).triggerVisible();
+    vi.advanceTimersByTime(75);
+
+    expect(markMessagesAsRead).toHaveBeenCalledTimes(1);
+    expect(new Set(markMessagesAsRead.mock.calls[0][0])).toEqual(
+      new Set(['message-1', 'message-2'])
+    );
   });
 
   it('keeps optimized message wrappers discoverable in the rendered DOM', () => {

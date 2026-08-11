@@ -60,6 +60,7 @@ class MessageLoaderTest {
         messageLoader = new MessageLoader(
                 messageRepository,
                 userRepository,
+                fileRepository,
                 new MessageResponseMapper(fileRepository),
                 messageReadStatusService
         );
@@ -81,7 +82,8 @@ class MessageLoaderTest {
         
         lenient().when(userRepository.findAllById(anySet()))
                 .thenReturn(List.of(testUser));
-        lenient().doNothing().when(messageReadStatusService).updateReadStatus(anyList(), anyString());
+        lenient().when(messageReadStatusService.updateReadStatus(anyString(), anyList(), anyString()))
+                .thenReturn(0L);
     }
     
     private Message createMessage(String id, LocalDateTime timestamp) {

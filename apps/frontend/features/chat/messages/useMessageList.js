@@ -23,15 +23,25 @@ export const deriveUniqueSortedMessages = (
     return true;
   });
 
-  const allMessages = [...currentMessages, ...newMessages].sort((a, b) => {
-    return new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
-  });
+  const compareTimestamp = (a, b) =>
+    new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
+  newMessages.sort(compareTimestamp);
 
-  const messageMap = new Map();
-  allMessages.forEach((message) => messageMap.set(message._id, message));
+  // 중요: currentMessages는 이미 정렬됐다는 불변식을 이용해 O(n log n) 재정렬을 피한다.
+  const merged = [];
+  let currentIndex = 0;
+  let incomingIndex = 0;
+  while (currentIndex < currentMessages.length && incomingIndex < newMessages.length) {
+    if (compareTimestamp(currentMessages[currentIndex], newMessages[incomingIndex]) <= 0) {
+      merged.push(currentMessages[currentIndex++]);
+    } else {
+      merged.push(newMessages[incomingIndex++]);
+    }
+  }
+  merged.push(...currentMessages.slice(currentIndex), ...newMessages.slice(incomingIndex));
 
   return {
-    messages: Array.from(messageMap.values()),
+    messages: merged,
     processedMessageIds: nextProcessedMessageIds,
   };
 };

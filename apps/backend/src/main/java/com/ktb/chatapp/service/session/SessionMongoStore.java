@@ -6,8 +6,14 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.util.Optional;
+import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 /**
  * MongoDB implementation of SessionStore.
@@ -18,7 +24,10 @@ import org.springframework.stereotype.Component;
 public class SessionMongoStore implements SessionStore {
     
     private final SessionRepository sessionRepository;
+
+
     private final MeterRegistry meterRegistry;
+
     
     @Override
     public Optional<Session> findByUserId(String userId) {
@@ -28,6 +37,18 @@ public class SessionMongoStore implements SessionStore {
     @Override
     public Session save(Session session) {
         return sessionRepository.save(session);
+    }
+
+    @Override
+    public Optional<Session> validateAndTouch(
+            String userId, String sessionId, long activeAfter, long now, Instant expiresAt) {
+        Query query = Query.query(Criteria.where("userId").is(userId)
+                .and("sessionId").is(sessionId)
+                .and("lastActivity").gte(activeAfter));
+        Update update = new Update().set("lastActivity", now).set("expiresAt", expiresAt);
+        Session session = mongoTemplate.findAndModify(
+                query, update, FindAndModifyOptions.options().returnNew(true), Session.class);
+        return Optional.ofNullable(session);
     }
     
     @Override

@@ -37,6 +37,12 @@ public class SocketIOConfig {
     @Value("${socketio.server.origin:*}")
     private String origin;
 
+    @Value("${socketio.server.accept-backlog:128}")
+    private int acceptBacklog;
+
+    @Value("${socketio.server.tcp-no-delay:true}")
+    private boolean tcpNoDelay;
+
     @Bean(initMethod = "start", destroyMethod = "stop")
     public SocketIOServer socketIOServer(AuthTokenListener authTokenListener, MeterRegistry meterRegistry) {
         com.corundumstudio.socketio.Configuration config = new com.corundumstudio.socketio.Configuration();
@@ -45,8 +51,8 @@ public class SocketIOConfig {
         
         var socketConfig = new SocketConfig();
         socketConfig.setReuseAddress(true);
-        socketConfig.setTcpNoDelay(false);
-        socketConfig.setAcceptBackLog(10);
+        socketConfig.setTcpNoDelay(tcpNoDelay);
+        socketConfig.setAcceptBackLog(acceptBacklog);
         socketConfig.setTcpSendBufferSize(4096);
         socketConfig.setTcpReceiveBufferSize(4096);
         config.setSocketConfig(socketConfig);

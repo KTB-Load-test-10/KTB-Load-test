@@ -1,11 +1,11 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { Suspense, useState, useCallback, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { LikeIcon, CopyIcon } from '@vapor-ui/icons';
 import { Button, IconButton, VStack, HStack, Box } from '@vapor-ui/core';
-import EmojiPicker from './EmojiPicker';
 import { Toast } from './Toast';
 
 const FALLBACK_COPY_ELEMENT_ID = 'message-copy-fallback';
+const EmojiPicker = React.lazy(() => import('./EmojiPicker'));
 
 const selectTextForManualCopy = (text) => {
   if (typeof document === 'undefined') {
@@ -299,12 +299,14 @@ const MessageActions = ({
               data-testid="emoji-picker-container"
             >
               <div className="bg-gray-800 rounded-lg shadow-lg border border-gray-700">
-                <EmojiPicker
-                  onSelect={handleReactionSelect}
-                  emojiSize={20}
-                  perLine={8}
-                  theme="light"
-                />
+                <Suspense fallback={<div className="p-4 text-sm">이모지 불러오는 중…</div>}>
+                  <EmojiPicker
+                    onSelect={handleReactionSelect}
+                    emojiSize={20}
+                    perLine={8}
+                    theme="light"
+                  />
+                </Suspense>
               </div>
             </div>,
             document.body

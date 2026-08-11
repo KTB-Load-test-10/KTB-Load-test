@@ -54,12 +54,8 @@ public class RoomJoinHandler {
                 return;
             }
             
-            if (userRepository.findById(userId).isEmpty()) {
-                client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "User not found"));
-                return;
-            }
-            
-            if (roomRepository.findById(roomId).isEmpty()) {
+            Room room = roomRepository.findById(roomId).orElse(null);
+            if (room == null) {
                 client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "채팅방을 찾을 수 없습니다."));
                 return;
             }
@@ -73,6 +69,8 @@ public class RoomJoinHandler {
             }
 
             roomRepository.addParticipant(roomId, userId);
+            room.setParticipantIds(new HashSet<>(room.getParticipantIds()));
+            room.addParticipant(userId);
 
             // Join socket room and add to user's room set
             client.joinRoom(roomId);
@@ -95,19 +93,9 @@ public class RoomJoinHandler {
             FetchMessagesRequest req = new FetchMessagesRequest(roomId, 30, null);
             FetchMessagesResponse messageLoadResult = messageLoader.loadMessages(req, userId);
 
-            // 업데이트된 room 다시 조회하여 최신 participantIds 가져오기
-            Optional<Room> roomOpt = roomRepository.findById(roomId);
-            if (roomOpt.isEmpty()) {
-                client.sendEvent(JOIN_ROOM_ERROR, Map.of("message", "채팅방을 찾을 수 없습니다."));
-                return;
-            }
-
-            // 참가자 정보 조회
-            List<UserResponse> participants = roomOpt.get().getParticipantIds()
-                    .stream()
-                    .map(userRepository::findById)
-                    .filter(Optional::isPresent)
-                    .map(Optional::get)
+            // 중요: 참가자 수와 무관하게 사용자 조회를 한 번만 수행한다.
+            List<UserResponse> participants = java.util.stream.StreamSupport.stream(
+                    userRepository.findAllById(room.getParticipantIds()).spliterator(), false)
                     .map(UserResponse::from)
                     .toList();
             

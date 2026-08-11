@@ -11,7 +11,8 @@ const UserMessage = ({
   currentUser = null,
   onReactionAdd,
   onReactionRemove,
-  room = null
+  room = null,
+  participantIds
 }) => {
   // 메시지 DOM 요소에 대한 ref 생성
   const messageDomRef = useRef(null);
@@ -82,10 +83,8 @@ const UserMessage = ({
             <ReadStatus
               messageType={msg.type}
               participants={room?.participants || []}
+              participantIds={participantIds}
               readers={msg.readers || []}
-              messageId={msg._id}
-              messageRef={messageDomRef}
-              currentUserId={currentUser?._id || currentUser?.id}
             />
           </HStack>
         </div>
