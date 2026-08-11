@@ -117,4 +117,24 @@ describe('useRoomsSocket', () => {
 
     expect(setRooms).not.toHaveBeenCalled();
   });
+
+  it('uses a lightweight roomCreated payload without participants for the room list', async () => {
+    const socket = createSocket();
+    const setRooms = vi.fn();
+
+    renderRoomsSocket(socket, { setRooms });
+
+    await waitFor(() => {
+      expect(socket.on).toHaveBeenCalledWith('roomCreated', expect.any(Function));
+    });
+
+    const room = { _id: 'room-3', name: '새 방', participantsCount: 2, recentMessageCount: 0 };
+    handlerFor(socket, 'roomCreated')(room);
+
+    const updateRooms = setRooms.mock.calls[0][0];
+    expect(updateRooms([{ _id: 'room-1', participantsCount: 1 }])).toEqual([
+      room,
+      { _id: 'room-1', participantsCount: 1 },
+    ]);
+  });
 });
