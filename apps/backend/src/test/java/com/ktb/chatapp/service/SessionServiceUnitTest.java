@@ -18,7 +18,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,17 +36,16 @@ class SessionServiceUnitTest {
     private SessionService sessionService;
 
     @Test
-    @DisplayName("세션 생성은 기존 사용자 세션을 제거한 뒤 새 세션을 저장한다")
-    void createSession_RemovesExistingSessionsBeforeSave() {
+    @DisplayName("세션 생성은 기존 사용자 세션을 원자적으로 교체한다")
+    void createSession_ReplacesExistingSessionBeforeSave() {
         ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
-        when(sessionStore.save(any(Session.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sessionStore.replace(any(Session.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         SessionCreationResult result = sessionService.createSession(
                 USER_ID,
                 new SessionMetadata("agent", "127.0.0.1", "device"));
 
-        verify(sessionStore).deleteAll(USER_ID);
-        verify(sessionStore).save(sessionCaptor.capture());
+        verify(sessionStore).replace(sessionCaptor.capture());
         Session savedSession = sessionCaptor.getValue();
         assertThat(result.getSessionId()).isEqualTo(savedSession.getSessionId());
         assertThat(result.getExpiresIn()).isEqualTo(SessionService.SESSION_TTL_SEC);
@@ -58,7 +56,7 @@ class SessionServiceUnitTest {
     @Test
     @DisplayName("세션 생성 중 저장소 실패는 RuntimeException으로 래핑된다")
     void createSession_StoreFailure_ThrowsRuntimeException() {
-        doThrow(new IllegalStateException("store down")).when(sessionStore).deleteAll(USER_ID);
+        when(sessionStore.replace(any(Session.class))).thenThrow(new IllegalStateException("store down"));
 
         RuntimeException exception = assertThrows(
                 RuntimeException.class,
@@ -116,6 +114,52 @@ class SessionServiceUnitTest {
         assertThat(result.getError()).isEqualTo("SESSION_EXPIRED");
         verify(sessionStore).delete(USER_ID, SESSION_ID);
         verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    @Test
+    @DisplayName("세션 검증은 원자적 validateAndTouch 결과를 사용한다")
+    void validateSession_UsesAtomicValidateAndTouchResult() {
+        Session recentSession = activeSessionWithLastActivity(Instant.now().toEpochMilli());
+        when(sessionStore.validateAndTouch(
+                eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenReturn(Optional.of(recentSession));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        assertThat(result.getSession().getSessionId()).isEqualTo(SESSION_ID);
+        verify(sessionStore, never()).findByUserId(anyString());
+        verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    @Test
+    @DisplayName("세션 검증은 별도 저장 없이 validateAndTouch를 한 번만 호출한다")
+    void validateSession_CallsValidateAndTouchOnceWithoutSeparateSave() {
+        long previousActivity = Instant.now().toEpochMilli()
+                - SessionService.ACTIVITY_REFRESH_INTERVAL_MS
+                - 1_000;
+        Session staleSession = activeSessionWithLastActivity(previousActivity);
+        when(sessionStore.validateAndTouch(
+                eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class)))
+                .thenReturn(Optional.of(staleSession));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        verify(sessionStore).validateAndTouch(
+                eq(USER_ID), eq(SESSION_ID), anyLong(), anyLong(), any(Instant.class));
+        verify(sessionStore, never()).findByUserId(anyString());
+        verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    private Session activeSessionWithLastActivity(long lastActivity) {
+        return Session.builder()
+                .userId(USER_ID)
+                .sessionId(SESSION_ID)
+                .createdAt(lastActivity)
+                .lastActivity(lastActivity)
+                .expiresAt(Instant.ofEpochMilli(lastActivity).plusSeconds(SessionService.SESSION_TTL_SEC))
+                .build();
     }
 
     @Test

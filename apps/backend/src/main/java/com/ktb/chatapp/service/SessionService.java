@@ -2,6 +2,7 @@ package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.model.Session;
 import com.ktb.chatapp.service.session.SessionStore;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ public class SessionService {
     private final SessionStore sessionStore;
     public static final long SESSION_TTL_SEC = DurationStyle.detectAndParse(SESSION_TTL).getSeconds();
     private static final long SESSION_TIMEOUT = SESSION_TTL_SEC * 1000;
+    public static final long ACTIVITY_REFRESH_INTERVAL_MS = Duration.ofSeconds(30).toMillis();
 
     private String generateSessionId() {
         return UUID.randomUUID().toString().replace("-", "");
@@ -36,9 +38,6 @@ public class SessionService {
 
     public SessionCreationResult createSession(String userId, SessionMetadata metadata) {
         try {
-            // Remove all existing user sessions
-            removeAllUserSessions(userId);
-
             String sessionId = generateSessionId();
             long now = Instant.now().toEpochMilli();
             
@@ -51,7 +50,8 @@ public class SessionService {
                     .expiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC))
                     .build();
 
-            session = sessionStore.save(session);
+            // 중요: Redis는 기존 값을 단일 overwrite로 교체해 이전 토큰을 즉시 무효화한다.
+            session = sessionStore.replace(session);
             
             SessionData sessionData = toSessionData(session);
 

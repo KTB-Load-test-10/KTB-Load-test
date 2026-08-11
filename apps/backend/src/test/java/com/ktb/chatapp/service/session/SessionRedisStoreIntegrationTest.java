@@ -5,6 +5,7 @@ import com.ktb.chatapp.config.RedisTestContainer;
 import com.ktb.chatapp.model.Session;
 import com.ktb.chatapp.service.SessionMetadata;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
@@ -56,11 +57,12 @@ class SessionRedisStoreIntegrationTest {
     }
 
     @Test
-    @DisplayName("세션 검증과 TTL 연장은 한 Redis 원자 연산으로 수행한다")
+    @DisplayName("30초가 지난 세션의 activity와 TTL은 한 Redis 원자 연산으로 갱신한다")
     void validateAndTouch_UpdatesActivityAndTtl() {
         Session session = newSession(Instant.now().plusSeconds(60));
+        session.setLastActivity(Instant.now().minusSeconds(31).toEpochMilli());
         sessionStore.save(session);
-        long touchedAt = Instant.now().toEpochMilli() + 1;
+        long touchedAt = Instant.now().toEpochMilli();
         Instant newExpiry = Instant.now().plusSeconds(300);
 
         Session touched = sessionStore.validateAndTouch(
@@ -69,6 +71,26 @@ class SessionRedisStoreIntegrationTest {
         assertThat(touched.getLastActivity()).isEqualTo(touchedAt);
         assertThat(touched.getExpiresAt()).isEqualTo(newExpiry);
         assertThat(redisTemplate.getExpire(KEY)).isGreaterThan(200L);
+    }
+
+    @Test
+    @DisplayName("30초 이내에 갱신된 세션은 Redis write와 TTL 연장을 생략한다")
+    void validateAndTouch_RecentlyTouchedSession_DoesNotWrite() {
+        Session session = newSession(Instant.now().plusSeconds(60));
+        sessionStore.save(session);
+        Long ttlBefore = redisTemplate.getExpire(KEY);
+        long requestedTouch = session.getLastActivity() + Duration.ofSeconds(1).toMillis();
+
+        Session result = sessionStore.validateAndTouch(
+                USER_ID,
+                SESSION_ID,
+                session.getLastActivity(),
+                requestedTouch,
+                Instant.now().plusSeconds(300)).orElseThrow();
+
+        assertThat(result.getLastActivity()).isEqualTo(session.getLastActivity());
+        assertThat(result.getExpiresAt()).isEqualTo(session.getExpiresAt());
+        assertThat(redisTemplate.getExpire(KEY)).isLessThanOrEqualTo(ttlBefore);
     }
 
     @Test

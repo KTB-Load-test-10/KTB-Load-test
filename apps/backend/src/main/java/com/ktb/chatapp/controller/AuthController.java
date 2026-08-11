@@ -175,9 +175,6 @@ public class AuthController {
 
             SecurityContextHolder.getContext().setAuthentication(authentication);
             
-            // 단일 세션 정책을 위해 기존 세션 제거
-            sessionService.removeAllUserSessions(user.getId());
-
             // Create new session
             SessionMetadata metadata = new SessionMetadata(
                     request.getHeader("User-Agent"),
@@ -372,8 +369,7 @@ public class AuthController {
                         .body(new TokenRefreshResponse(false, "만료된 세션입니다.", null, null));
             }
 
-            // 세션 갱신 - 새로운 세션 ID 생성
-            sessionService.removeSession(user.getId(), sessionId);
+            // 세션 갱신은 createSession의 단일 교체 연산이 담당한다.
             SessionMetadata metadata = new SessionMetadata(
                     request.getHeader("User-Agent"),
                     getClientIpAddress(request),

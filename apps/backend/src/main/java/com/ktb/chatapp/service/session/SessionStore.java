@@ -26,6 +26,13 @@ public interface SessionStore {
      */
     Session save(Session session);
 
+    /**
+     * Replace a user's active session without a delete-then-save gap.
+     * Redis implements this as one SET overwrite; the Mongo fallback preserves
+     * the same public contract for local or recovery use.
+     */
+    Session replace(Session session);
+
     /** 세션 일치·만료 검증과 활동 시각 갱신을 한 저장소 왕복으로 수행한다. */
     Optional<Session> validateAndTouch(
             String userId, String sessionId, long activeAfter, long now, Instant expiresAt);

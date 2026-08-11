@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -31,11 +32,16 @@ public class SessionRedisStore implements SessionStore {
             if session['sessionId'] ~= ARGV[1] or tonumber(session['lastActivity']) < tonumber(ARGV[2]) then
                 return nil
             end
-            session['lastActivity'] = tonumber(ARGV[3])
-            session['expiresAt'] = ARGV[4]
-            local updated = cjson.encode(session)
-            redis.call('SET', KEYS[1], updated, 'PX', ARGV[5])
-            return updated
+            local lastActivity = tonumber(session['lastActivity'])
+            local now = tonumber(ARGV[3])
+            if now - lastActivity >= tonumber(ARGV[5]) then
+                session['lastActivity'] = now
+                session['expiresAt'] = ARGV[4]
+                local updated = cjson.encode(session)
+                redis.call('SET', KEYS[1], updated, 'PX', ARGV[6])
+                return updated
+            end
+            return value
             """, String.class);
     private static final DefaultRedisScript<Long> DELETE_IF_SESSION_MATCHES = new DefaultRedisScript<>("""
             local value = redis.call('GET', KEYS[1])
@@ -51,6 +57,9 @@ public class SessionRedisStore implements SessionStore {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
 
+    @Value("${app.auth.session.touch-interval-seconds:30}")
+    private long touchIntervalSeconds;
+
     @Override
     public Optional<Session> findByUserId(String userId) {
         return deserialize(redisTemplate.opsForValue().get(key(userId)));
@@ -64,6 +73,12 @@ public class SessionRedisStore implements SessionStore {
     }
 
     @Override
+    public Session replace(Session session) {
+        // 중요: Redis SET은 동일 사용자 키를 원자적으로 덮어써 삭제 구간을 만들지 않는다.
+        return save(session);
+    }
+
+    @Override
     public Optional<Session> validateAndTouch(
             String userId, String sessionId, long activeAfter, long now, Instant expiresAt) {
         long ttlMillis = Math.max(1L, Duration.between(Instant.now(), expiresAt).toMillis());
@@ -74,6 +89,7 @@ public class SessionRedisStore implements SessionStore {
                 Long.toString(activeAfter),
                 Long.toString(now),
                 expiresAt.toString(),
+                Long.toString(Duration.ofSeconds(touchIntervalSeconds).toMillis()),
                 Long.toString(ttlMillis));
         return deserialize(value);
     }
