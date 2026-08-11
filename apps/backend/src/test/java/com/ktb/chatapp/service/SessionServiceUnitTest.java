@@ -113,6 +113,48 @@ class SessionServiceUnitTest {
     }
 
     @Test
+    @DisplayName("최근 갱신된 세션 검증은 저장을 생략한다")
+    void validateSession_RecentlyRefreshed_DoesNotSave() {
+        Session recentSession = activeSessionWithLastActivity(Instant.now().toEpochMilli());
+        when(sessionStore.findByUserId(USER_ID)).thenReturn(Optional.of(recentSession));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        verify(sessionStore, never()).save(any(Session.class));
+    }
+
+    @Test
+    @DisplayName("갱신 주기가 지난 세션 검증은 활동 시간과 TTL을 한 번 갱신한다")
+    void validateSession_RefreshIntervalElapsed_SavesOnce() {
+        long previousActivity = Instant.now().toEpochMilli()
+                - SessionService.ACTIVITY_REFRESH_INTERVAL_MS
+                - 1_000;
+        Session staleSession = activeSessionWithLastActivity(previousActivity);
+        Instant previousExpiry = staleSession.getExpiresAt();
+        when(sessionStore.findByUserId(USER_ID)).thenReturn(Optional.of(staleSession));
+        when(sessionStore.save(any(Session.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        SessionValidationResult result = sessionService.validateSession(USER_ID, SESSION_ID);
+
+        assertThat(result.isValid()).isTrue();
+        ArgumentCaptor<Session> captor = ArgumentCaptor.forClass(Session.class);
+        verify(sessionStore).save(captor.capture());
+        assertThat(captor.getValue().getLastActivity()).isGreaterThan(previousActivity);
+        assertThat(captor.getValue().getExpiresAt()).isAfter(previousExpiry);
+    }
+
+    private Session activeSessionWithLastActivity(long lastActivity) {
+        return Session.builder()
+                .userId(USER_ID)
+                .sessionId(SESSION_ID)
+                .createdAt(lastActivity)
+                .lastActivity(lastActivity)
+                .expiresAt(Instant.ofEpochMilli(lastActivity).plusSeconds(SessionService.SESSION_TTL_SEC))
+                .build();
+    }
+
+    @Test
     @DisplayName("세션 검증 중 저장소 실패는 VALIDATION_ERROR로 반환한다")
     void validateSession_StoreFailure_ReturnsValidationError() {
         when(sessionStore.findByUserId(USER_ID)).thenThrow(new IllegalStateException("store down"));
