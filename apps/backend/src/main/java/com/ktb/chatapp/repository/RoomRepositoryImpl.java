@@ -19,6 +19,14 @@ public class RoomRepositoryImpl implements RoomRepositoryCustom {
         Query query = new Query().limit(limit)
             .with(Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("_id")));
 
+        // 목록 UI와 cursor 생성에 필요한 Room 필드만 읽는다.
+        query.fields()
+                .include("_id")
+                .include("name")
+                .include("hasPassword")
+                .include("createdAt")
+                .include("participantIds");
+
         if (cursor != null) {
             Criteria olderCreatedAt = Criteria.where("createdAt").lt(cursor.createdAt());
             Criteria sameCreatedAtOlderId = new Criteria().andOperator(
