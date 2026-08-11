@@ -11,13 +11,12 @@ import com.ktb.chatapp.dto.UserResponse;
  * @param authSessionId user auth session id
  * @param socketId user websocket session id
  */
-public record SocketUser(String id, String name, String authSessionId, String socketId) implements Serializable {
 public record SocketUser(
         String id,
         String name,
         String authSessionId,
         String socketId,
-        UserResponse userResponse) {
+        UserResponse userResponse) implements Serializable {
 
     public SocketUser(String id, String name, String authSessionId, String socketId) {
         this(
