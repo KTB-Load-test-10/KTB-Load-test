@@ -61,7 +61,10 @@ public class MessageLoader {
             int limit,
             LocalDateTime before,
             String userId) {
-        Pageable pageable = PageRequest.of(0, limit + 1, Sort.by("timestamp").descending());
+        Pageable pageable = PageRequest.of(
+                0,
+                limit + 1,
+                Sort.by(Sort.Order.desc("timestamp"), Sort.Order.desc("_id")));
 
         List<Message> fetchedMessages = messageRepository
                 .findByRoomIdAndTimestampBefore(roomId, before, pageable);

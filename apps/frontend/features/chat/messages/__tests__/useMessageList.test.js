@@ -45,6 +45,22 @@ describe('mergeUniqueSortedMessages', () => {
     ]);
   });
 
+  it('uses the message id as a stable tie breaker for equal timestamps', () => {
+    const messages = mergeUniqueSortedMessages(
+      [],
+      [
+        { _id: 'message-b', timestamp: '2026-01-01T00:00:01Z' },
+        { _id: 'message-a', timestamp: '2026-01-01T00:00:01Z' },
+      ],
+      new Set()
+    );
+
+    expect(messages.map((message) => message._id)).toEqual([
+      'message-a',
+      'message-b',
+    ]);
+  });
+
   it('throws for invalid incoming message payloads', () => {
     expect(() => mergeUniqueSortedMessages([], null, new Set())).toThrow(
       'Invalid messages format'
