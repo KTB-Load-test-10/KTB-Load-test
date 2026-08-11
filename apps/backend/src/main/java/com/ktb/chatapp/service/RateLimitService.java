@@ -1,17 +1,12 @@
 package com.ktb.chatapp.service;
 
-import com.ktb.chatapp.model.RateLimit;
 import com.ktb.chatapp.service.ratelimit.RateLimitStore;
-import jakarta.annotation.PostConstruct;
+import com.ktb.chatapp.service.ratelimit.RateLimitStoreResult;
 import java.time.Duration;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import static java.net.InetAddress.*;
 
 @Slf4j
 @Service
@@ -19,73 +14,29 @@ import static java.net.InetAddress.*;
 public class RateLimitService {
 
     private final RateLimitStore rateLimitStore;
-    @Value("${HOSTNAME:''}")
-    private String hostName;
-    
-    @PostConstruct
-    public void init() {
-        if (!hostName.isEmpty()) {
-            return;
-        }
-        hostName = generateHostname();
-    }
-    
-    private String generateHostname() {
-        try {
-            return getLocalHost().getHostName();
-        } catch (Exception e) {
-            return "unknown-" + java.util.UUID.randomUUID().toString().substring(0, 8);
-        }
-    }
-    
-    
-    @Transactional
-    public RateLimitCheckResult checkRateLimit(String _clientId, int maxRequests, Duration window) {
-        String actualClientId = hostName + ":" + _clientId;
+
+    public RateLimitCheckResult checkRateLimit(String clientId, int maxRequests, Duration window) {
         Duration effectiveWindow = window != null ? window : Duration.ofSeconds(1);
         long windowSeconds = Math.max(1L, effectiveWindow.getSeconds());
-        Instant now = Instant.now();
-        long nowEpochSeconds = now.getEpochSecond();
-        Instant expiresAt = now.plusSeconds(windowSeconds);
+        long nowEpochSeconds = Instant.now().getEpochSecond();
 
         try {
-            RateLimit rateLimit = rateLimitStore.findByClientId(actualClientId).orElse(null);
-            if (rateLimit != null && !rateLimit.getExpiresAt().isAfter(now)) {
-                rateLimit.setCount(0);
-                rateLimit.setExpiresAt(expiresAt);
-            }
-
-            int currentCount = rateLimit != null ? rateLimit.getCount() : 0;
-
-            if (rateLimit != null && currentCount >= maxRequests) {
-                long retryAfterSeconds = Math.max(1L,
-                    rateLimit.getExpiresAt().getEpochSecond() - nowEpochSeconds);
-                long resetEpochSeconds = rateLimit.getExpiresAt().getEpochSecond();
+            RateLimitStoreResult state = rateLimitStore.increment(String.valueOf(clientId), windowSeconds);
+            long ttlSeconds = state.ttlSeconds();
+            long resetEpochSeconds = nowEpochSeconds + ttlSeconds;
+            if (state.count() > maxRequests) {
                 return RateLimitCheckResult.rejected(
-                        maxRequests, windowSeconds, resetEpochSeconds, retryAfterSeconds);
+                        maxRequests, windowSeconds, resetEpochSeconds, ttlSeconds);
             }
-
-            // Create or update rate limit
-            if (rateLimit == null) {
-                rateLimit = RateLimit.builder()
-                        .clientId(actualClientId)
-                        .count(1)
-                        .expiresAt(expiresAt)
-                        .build();
-            } else {
-                rateLimit.setCount(currentCount + 1);
-            }
-            rateLimitStore.save(rateLimit);
-
-            int newCount = currentCount + 1;
-            int remaining = Math.max(0, maxRequests - newCount);
-            long ttlSeconds = Math.max(1L, rateLimit.getExpiresAt().getEpochSecond() - nowEpochSeconds);
-            long resetEpochSeconds = rateLimit.getExpiresAt().getEpochSecond();
 
             return RateLimitCheckResult.allowed(
-                    maxRequests, remaining, windowSeconds, resetEpochSeconds, ttlSeconds);
+                    maxRequests,
+                    Math.max(0, maxRequests - (int) state.count()),
+                    windowSeconds,
+                    resetEpochSeconds,
+                    ttlSeconds);
         } catch (Exception e) {
-            log.error("Rate limit check failed for client: {}", actualClientId, e);
+            log.error("Rate limit check failed for client: {}", clientId, e);
             long resetEpochSeconds = nowEpochSeconds + windowSeconds;
             return RateLimitCheckResult.allowed(
                     maxRequests, maxRequests, windowSeconds, resetEpochSeconds, windowSeconds);

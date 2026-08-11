@@ -2,6 +2,7 @@ package com.ktb.chatapp.service;
 
 import com.ktb.chatapp.model.Session;
 import com.ktb.chatapp.service.session.SessionStore;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ public class SessionService {
     private final SessionStore sessionStore;
     public static final long SESSION_TTL_SEC = DurationStyle.detectAndParse(SESSION_TTL).getSeconds();
     private static final long SESSION_TIMEOUT = SESSION_TTL_SEC * 1000;
+    public static final long ACTIVITY_REFRESH_INTERVAL_MS = Duration.ofSeconds(30).toMillis();
 
     private String generateSessionId() {
         return UUID.randomUUID().toString().replace("-", "");
@@ -87,17 +89,21 @@ public class SessionService {
             }
 
             // Check if session has timed out
-            long now = Instant.now().toEpochMilli();
+            Instant nowInstant = Instant.now();
+            long now = nowInstant.toEpochMilli();
             if (now - session.getLastActivity() > SESSION_TIMEOUT) {
                 log.warn("Session timed out for userId: {}, sessionId: {}", userId, sessionId);
                 removeSession(userId, sessionId);
                 return SessionValidationResult.invalid("SESSION_EXPIRED", "세션이 만료되었습니다.");
             }
 
-            // Update last activity
-            session.setLastActivity(now);
-            session.setExpiresAt(Instant.now().plusSeconds(SESSION_TTL_SEC));
-            session = sessionStore.save(session);
+            // 인증 요청마다 세션 문서를 저장하지 않고 일정 주기마다 TTL을 연장한다.
+            // 세션 만료 검사는 위에서 매번 수행하므로 저장을 생략해도 유효성은 보장된다.
+            if (now - session.getLastActivity() >= ACTIVITY_REFRESH_INTERVAL_MS) {
+                session.setLastActivity(now);
+                session.setExpiresAt(nowInstant.plusSeconds(SESSION_TTL_SEC));
+                session = sessionStore.save(session);
+            }
 
             SessionData sessionData = toSessionData(session);
             return SessionValidationResult.valid(sessionData);
