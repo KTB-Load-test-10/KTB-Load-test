@@ -160,7 +160,7 @@ jobs:
           for host in $BACKEND_HOSTS; do
             ssh \
               -o BatchMode=yes \
-              -o StrictHostKeyChecking=yes \
+              -o StrictHostKeyChecking=accept-new \
               -i "$HOME/.ssh/deploy_key" \
               "ubuntu@$host" \
               "docker --version && test -r /opt/ktb/backend.env"
